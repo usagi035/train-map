@@ -14,7 +14,7 @@
   "build": {
     "appId": "com.example.railwaymapeditor",
     "productName": "RailwayMapEditor",
-    "files": ["main.js", "index.html"],
+    "files": ["main.js", "index.html", "renderer.js"],
     "win": {
       "target": ["nsis", "portable"]
     }
