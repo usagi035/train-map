@@ -1,0 +1,22 @@
+{
+  "name": "railway-map-editor",
+  "version": "1.0.0",
+  "description": "路線図エディタ",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.example.railwaymapeditor",
+    "productName": "RailwayMapEditor",
+    "files": ["main.js", "index.html"],
+    "win": {
+      "target": ["nsis", "portable"]
+    }
+  }
+}
