@@ -1,8 +1,18 @@
 const COLORS = ['#E5352B','#1E7BC4','#2E9E5B','#F29B1F','#8A4FC9','#00A3A3'];
-const G = 20, W = 2400, H = 1600;   // 1マス = 20px
+const G = 20, W = 2400, H = 1600;   // 1マス = 20px / W,Hは初期サイズ
+const mw = m => m.w || W, mh = m => m.h || H;
+// 必要なところまでキャンバスを広げる(draw.ioのように右・下へ自動拡張)
+function ensureRoom(m, x, y) {
+  const pad = 400, step = 400;
+  const nx = Math.max(mw(m), Math.ceil((x + pad) / step) * step);
+  const ny = Math.max(mh(m), Math.ceil((y + pad) / step) * step);
+  if (nx !== mw(m)) m.w = nx;
+  if (ny !== mh(m)) m.h = ny;
+}
 const HINTS = {
-  select:  '駅や踏切をドラッグして移動 / Deleteキーで削除',
+  select:  '駅や踏切をドラッグして移動 / Deleteキーで削除 / Space+ドラッグで画面移動',
   station: 'クリックで駅を追加(線の上なら間に挿入)',
+  hub:     'クリックで乗り換え駅を追加(複数路線に属します)',
   crossing:'線の近くをクリックして踏切を置く',
   box:'ドラッグで四角形(ラベル枠)を追加。クリックだけなら標準サイズ'
 };
@@ -13,6 +23,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>'
 const BG = '#f4f6f5';
 const mkLine = (name, color) => ({ id: uid(), name, color, width: 8, stations: [], crossings: [] });
 const mkMap = name => ({ id: uid(), name, bg: BG, lines: [mkLine('1号線', COLORS[0])] });
+const mkStation = (name, x, y) => ({ id: uid(), name, x, y, hub: false });
 const lw = l => l.width || 8;
 const isDark = hex => { const n = parseInt(hex.slice(1), 16); return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) < 120; };
 
@@ -82,8 +93,10 @@ function renderCanvas() {
   const halo = `style="paint-order:stroke;stroke:${bg};stroke-width:4px"`;
   document.getElementById('stage').style.background = bg;
   applyZoom();
+  const cw = mw(m), ch = mh(m);
   let h = `<defs><pattern id="g" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="${fg}" stroke-opacity=".1" stroke-width="1"/></pattern></defs>` +
-          `<rect width="2400" height="1600" fill="${bg}"/><rect width="2400" height="1600" fill="url(#g)"/>`;
+          `<rect width="${cw}" height="${ch}" fill="${bg}"/><rect width="${cw}" height="${ch}" fill="url(#g)"/>` +
+          `<rect width="${cw}" height="${ch}" fill="none" stroke="${fg}" stroke-opacity=".35" stroke-width="2" stroke-dasharray="8 6"/>`;
   (m.boxes || []).forEach(b => {
     const sel = ui.sel && ui.sel.t === 'bx' && ui.sel.id === b.id, tc = isDark(b.fill) ? '#fff' : '#1f2d36', n = [...(b.text || '')].length;
     const fs = Math.max(8, Math.min(14, b.h - 8, (b.w - 8) / Math.max(1, n)));
@@ -137,9 +150,14 @@ function renderCanvas() {
       else if (sh === 'square') { body = `<rect x="${s.x - R}" y="${s.y - R}" width="${R * 2}" height="${R * 2}" rx="2" fill="#fff" stroke="${c}" stroke-width="${rw}"/>`; ext = R + rw / 2; }
       else if (sh === 'diamond') { const d = R * 1.35; body = `<polygon points="${s.x},${s.y - d} ${s.x + d},${s.y} ${s.x},${s.y + d} ${s.x - d},${s.y}" fill="#fff" stroke="${c}" stroke-width="${rw * 0.8}" stroke-linejoin="round"/>`; ext = d + 2; }
       else { body = `<circle cx="${s.x}" cy="${s.y}" r="${R}" fill="#fff" stroke="${c}" stroke-width="${rw}"/>`; ext = R + rw / 2; }
+      const nx = s.nameX || 0, ny = s.nameY || 0, rot = s.nameRot || 0;
+      const tx = s.x + nx, ty = s.y + ny + ext + 20;
+      const hubR = s.hub ? R + 4 : 0;
       h += `<g data-t="st" data-l="${l.id}" data-id="${s.id}">${body}` +
+           (s.hub ? `<circle cx="${s.x}" cy="${s.y}" r="${hubR}" fill="none" stroke="${c}" stroke-width="3" stroke-dasharray="5 3"/>` : '') +
            (sel ? `<circle cx="${s.x}" cy="${s.y}" r="${ext + 5}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` : '') +
-           `<text x="${s.x}" y="${s.y + ext + 20}" text-anchor="middle" font-size="14" font-weight="700" fill="${fg}" ${halo}>${esc(s.name)}</text></g>`;
+           (rot ? `<text class="stname" data-t="stname" data-l="${l.id}" data-id="${s.id}" x="${tx}" y="${ty}" text-anchor="middle" font-size="14" font-weight="700" fill="${fg}" ${halo} style="cursor:move" transform="rotate(${rot} ${tx} ${ty})">${esc(s.name)}</text>`
+                : `<text class="stname" data-t="stname" data-l="${l.id}" data-id="${s.id}" x="${tx}" y="${ty}" text-anchor="middle" font-size="14" font-weight="700" fill="${fg}" ${halo} style="cursor:move">${esc(s.name)}</text>`) + '</g>';
     });
   });
   document.getElementById('cv').innerHTML = h;
@@ -156,7 +174,11 @@ function renderSide() {
         const s = l.stations[i];
         sel = `<h3>選択中の駅</h3><label>駅名<input id="sname" value="${esc(s.name)}"></label>` +
           `<label>形<select id="sshape">${Object.entries(SHAPES).map(([k, v]) => `<option value="${k}"${(s.shape || 'circle') === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>` +
-          `<div class="row" style="align-items:center"><span>色</span><input type="color" id="scolor" value="${s.color || l.color}"><button id="sreset">路線の色に戻す</button></div>`;
+          `<div class="row" style="align-items:center"><span>色</span><input type="color" id="scolor" value="${s.color || l.color}"><button id="sreset">路線の色に戻す</button></div>` +
+          `<label>駅名の向き<select id="snameRot"><option value="0"${(s.nameRot || 0) === 0 ? ' selected' : ''}>普通</option><option value="45"${(s.nameRot || 0) === 45 ? ' selected' : ''}>斜め(45°)</option><option value="90"${(s.nameRot || 0) === 90 ? ' selected' : ''}>縦(90°)</option></select></label>` +
+          `<label><input type="checkbox" id="shub"${s.hub ? ' checked' : ''}> 乗り換え駅(ターミナルハブ)</label>` +
+          (s.hub ? '<div class="note" style="margin-bottom:4px">乗り換え路線:</div>' +
+            curMap().lines.map(x => `<label style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><input type="checkbox" class="shubline" data-lid="${x.id}"${x.stations.some(st => st.id === s.id) ? ' checked' : ''} ${x.id === l.id ? 'disabled' : ''}> <i style="display:inline-block;width:18px;height:5px;border-radius:3px;background:${x.color};flex:none"></i>${esc(x.name)}${x.id === l.id ? '(この路線)' : ''}</label>`).join('') : '');
         if (i > 0) sel += `<label>前の駅との間隔(マス)<input id="gap" type="number" min="0.5" step="0.5" value="${(dist(l.stations[i - 1], s) / G).toFixed(1)}"></label><p class="note">変更すると、これ以降の駅も一緒に動きます。</p>`;
       }
     } else if (ui.sel.t === 'bx') {
@@ -195,16 +217,30 @@ function renderAll() {
 
 /* ---------- editing ---------- */
 function addStation(p) {
-  const l = curLine(), q = { x: clamp(Math.round(p.x / G) * G, 0, W), y: clamp(Math.round(p.y / G) * G, 0, H) };
-  const st = { id: uid(), name: '駅' + (l.stations.length + 1), x: q.x, y: q.y };
+  const l = curLine(), m = curMap();
   const r = project(l, p);
+  ensureRoom(m, p.x, p.y); if (r) ensureRoom(m, r.x, r.y);
+  const q = { x: clamp(Math.round(p.x / G) * G, 0, mw(m)), y: clamp(Math.round(p.y / G) * G, 0, mh(m)) };
+  const st = mkStation('駅' + (l.stations.length + 1), q.x, q.y);
   keepCrossings(l, () => {
-    if (!document.getElementById('snap').checked) { st.x = Math.round(p.x); st.y = Math.round(p.y); }
+    if (!document.getElementById('snap').checked) { st.x = clamp(Math.round(p.x), 0, mw(m)); st.y = clamp(Math.round(p.y), 0, mh(m)); }
     if (r && r.d < 14) { st.x = Math.round(r.x); st.y = Math.round(r.y); l.stations.splice(r.seg + 1, 0, st); }
     else l.stations.push(st);
   });
   ui.sel = { t: 'st', id: st.id };
   afterAdd(); save(); renderAll();
+}
+function addHubStation(p) {
+  const m = curMap(), l = curLine();
+  ensureRoom(m, p.x, p.y);
+  const q = { x: clamp(Math.round(p.x / G) * G, 0, mw(m)), y: clamp(Math.round(p.y / G) * G, 0, mh(m)) };
+  const st = mkStation('乗換駅' + (m.lines.reduce((n, x) => n + x.stations.length, 0) + 1), q.x, q.y);
+  st.hub = true;
+  // 選択中の路線に追加
+  l.stations.push(st);
+  ui.sel = { t: 'st', id: st.id };
+  ui.tool = 'select';
+  save(); renderAll();
 }
 function addCrossing(p) {
   let best = null;
@@ -218,7 +254,12 @@ function addCrossing(p) {
 function del() {
   if (!ui.sel) return;
   const l = curLine(), id = ui.sel.id;
-  if (ui.sel.t === 'st') keepCrossings(l, () => { l.stations = l.stations.filter(s => s.id !== id); });
+  if (ui.sel.t === 'st') {
+    // 乗り換e駅の場合はすべての路線から削除
+    const s = l.stations.find(st => st.id === id);
+    if (s && s.hub) curMap().lines.forEach(x => { x.stations = x.stations.filter(st => st.id !== id); });
+    else keepCrossings(l, () => { l.stations = l.stations.filter(st => st.id !== id); });
+  }
   else if (ui.sel.t === 'bx') curMap().boxes = (curMap().boxes || []).filter(b => b.id !== id);
   else l.crossings = l.crossings.filter(c => c.id !== id);
   ui.sel = null; save(); renderAll();
@@ -237,7 +278,9 @@ function snapCx(l, r) {
   return { seg: r.seg, t: l2 ? clamp(((g.x - a.x) * dx + (g.y - a.y) * dy) / l2, 0, 1) : 0 };
 }
 function applyZoom() {
-  cv.setAttribute('width', W * ui.zoom); cv.setAttribute('height', H * ui.zoom);
+  const m = curMap(), w = mw(m), h = mh(m);
+  cv.setAttribute('width', w * ui.zoom); cv.setAttribute('height', h * ui.zoom);
+  cv.setAttribute('viewBox', `0 0 ${w} ${h}`);
   const z = document.getElementById('zlabel'); if (z) z.textContent = Math.round(ui.zoom * 100) + '%';
 }
 function setZoom(z, cx, cy) {
@@ -255,10 +298,30 @@ stage.addEventListener('wheel', e => {
   setZoom(ui.zoom * Math.exp(-e.deltaY * 0.002), e.clientX - r.left, e.clientY - r.top);
 }, { passive: false });
 let drag = null;
+let spaceDown = false, pan = null;   // Space+ドラッグ / 中ボタンで画面をスクロール
+
+// 画面のパン(Space+ドラッグ または 中ボタンドラッグ)
+stage.addEventListener('mousedown', e => {
+  if (e.button === 1 || (e.button === 0 && spaceDown)) {
+    e.preventDefault();
+    pan = { x: e.clientX, y: e.clientY, sl: stage.scrollLeft, st: stage.scrollTop };
+    stage.style.cursor = 'grabbing';
+  }
+});
+window.addEventListener('mousemove', e => {
+  if (!pan) return;
+  stage.scrollLeft = pan.sl - (e.clientX - pan.x);
+  stage.scrollTop = pan.st - (e.clientY - pan.y);
+});
+window.addEventListener('mouseup', () => {
+  if (pan) { pan = null; stage.style.cursor = spaceDown ? 'grab' : ''; }
+});
 
 cv.addEventListener('mousedown', e => {
+  if (e.button !== 0 || spaceDown) return;   // 中ボタン / Space押下中はパン処理へ
   const el = e.target.closest('[data-t]'), p = pt(e), m = curMap();
   if (ui.tool === 'station') return addStation(p);
+  if (ui.tool === 'hub') return addHubStation(p);
   if (ui.tool === 'crossing') return addCrossing(p);
   if (ui.tool === 'box') {
     const q = snapPt(p), b = { id: uid(), x: q.x, y: q.y, w: G * 6, h: G * 3, text: 'ラベル', fill: '#ffffff' };
@@ -267,6 +330,11 @@ cv.addEventListener('mousedown', e => {
     renderAll(); return;
   }
   if (el && el.dataset.t === 'bxr') { ui.sel = { t: 'bx', id: el.dataset.id }; drag = { t: 'bxr', id: el.dataset.id }; }
+  else if (el.dataset.t === 'stname') {
+    const s = curLine().stations.find(s => s.id === el.dataset.id);
+    ui.sel = { t: 'st', id: s.id };
+    drag = { t: 'stname', id: s.id, ox: p.x - (s.x + (s.nameX || 0)), oy: p.y - (s.y + (s.nameY || 0)) };
+  }
   else if (el && el.dataset.t === 'bx') {
     const b = m.boxes.find(b => b.id === el.dataset.id);
     ui.sel = { t: 'bx', id: b.id }; drag = { t: 'bx', id: b.id, ox: p.x - b.x, oy: p.y - b.y };
@@ -281,18 +349,30 @@ window.addEventListener('mousemove', e => {
   const m = curMap(), l = curLine(), p = pt(e);
   if (drag.t === 'st') {
     const s = l.stations.find(s => s.id === drag.id), q = snapPt(p);
-    s.x = clamp(q.x, 0, W); s.y = clamp(q.y, 0, H);
+    ensureRoom(m, q.x, q.y);
+    s.x = clamp(q.x, 0, mw(m)); s.y = clamp(q.y, 0, mh(m));
+    // 乗り換e駅の場合はすべての路線の同じ駅を更新
+    if (s.hub) curMap().lines.forEach(x => {
+      const st = x.stations.find(st => st.id === s.id);
+      if (st) { st.x = s.x; st.y = s.y; }
+    });
+  } else if (drag.t === 'stname') {
+    const s = l.stations.find(s => s.id === drag.id);
+    const q = snapPt(p);
+    s.nameX = q.x - drag.ox - s.x;
+    s.nameY = q.y - drag.oy - s.y;
   } else if (drag.t === 'cx') {
     const c = l.crossings.find(c => c.id === drag.id), r = project(l, p);
     if (r) { const q = snapCx(l, r); c.seg = q.seg; c.t = q.t; }
   } else {
     const b = (m.boxes || []).find(b => b.id === drag.id); if (!b) return;
-    if (drag.t === 'bx') { const q = snapPt({ x: p.x - drag.ox, y: p.y - drag.oy }); b.x = clamp(q.x, 0, W - b.w); b.y = clamp(q.y, 0, H - b.h); }
-    else if (drag.t === 'bxr') { const q = snapPt(p); b.w = Math.max(G, q.x - b.x); b.h = Math.max(G, q.y - b.y); }
+    if (drag.t === 'bx') { const q = snapPt({ x: p.x - drag.ox, y: p.y - drag.oy }); ensureRoom(m, q.x + b.w, q.y + b.h); b.x = clamp(q.x, 0, mw(m) - b.w); b.y = clamp(q.y, 0, mh(m) - b.h); }
+    else if (drag.t === 'bxr') { const q = snapPt(p); ensureRoom(m, q.x, q.y); b.w = Math.max(G, q.x - b.x); b.h = Math.max(G, q.y - b.y); }
     else if (drag.t === 'bxnew') {
       if (!drag.moved && Math.hypot(p.x - drag.p0.x, p.y - drag.p0.y) < 4) return;
       drag.moved = true;
       const q = snapPt(p);
+      ensureRoom(m, q.x, q.y);
       b.x = Math.min(drag.a.x, q.x); b.y = Math.min(drag.a.y, q.y);
       b.w = Math.max(G, Math.abs(q.x - drag.a.x)); b.h = Math.max(G, Math.abs(q.y - drag.a.y));
     }
@@ -309,6 +389,13 @@ window.addEventListener('keydown', e => {
   if (/INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
   if (e.key === 'Delete' || e.key === 'Backspace') del();
   if (e.key === 'Escape') { ui.tool = 'select'; renderTools(); }
+  if (e.code === 'Space') {   // Space押下中はドラッグで画面をスクロール
+    e.preventDefault();
+    if (!spaceDown) { spaceDown = true; stage.style.cursor = 'grab'; }
+  }
+});
+window.addEventListener('keyup', e => {
+  if (e.code === 'Space') { spaceDown = false; if (!pan) stage.style.cursor = ''; }
 });
 
 /* ---------- toolbar / tabs ---------- */
@@ -325,6 +412,7 @@ document.getElementById('tools').addEventListener('click', e => {
     a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' }));
     a.download = 'railmaps.json'; a.click(); URL.revokeObjectURL(a.href);
   }
+  if (b.id === 'expimg') exportImage();
 });
 document.getElementById('file').addEventListener('change', e => {
   const f = e.target.files[0]; if (!f) return;
@@ -340,6 +428,32 @@ document.getElementById('file').addEventListener('change', e => {
   r.readAsText(f); e.target.value = '';
 });
 function persistOpen() { if (!location.hash) try { localStorage.setItem('railopen', JSON.stringify(ui.open)); } catch (e) {} }
+// SVGキャンバスをPNG画像として保存
+function exportImage() {
+  const svg = document.getElementById('cv');
+  const xml = new XMLSerializer().serializeToString(svg);
+  const svg64 = btoa(unescape(encodeURIComponent(xml)));
+  const img = new Image();
+  img.onload = () => {
+    const m = curMap(), cw = mw(m), ch = mh(m);
+    const canvas = document.createElement('canvas');
+    canvas.width = cw; canvas.height = ch;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = m.bg || BG;
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.drawImage(img, 0, 0, cw, ch);
+    canvas.toBlob(blob => {
+      if (!blob) return;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (curMap().name || '路線図') + '.png';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }, 'image/png');
+  };
+  img.onerror = () => alert('画像の書き出しに失敗しました。');
+  img.src = 'data:image/svg+xml;base64,' + svg64;
+}
 function openMap(id) {
   if (!ui.open.includes(id)) ui.open.push(id);
   ui.map = id; ui.line = curMap().lines[0].id; ui.sel = null; ui.home = false;
@@ -396,9 +510,34 @@ side.addEventListener('input', e => {
   else if (id === 'bfill') { m.boxes.find(b => b.id === ui.sel.id).fill = v; renderCanvas(); }
   else if (id === 'sshape') { l.stations.find(s => s.id === ui.sel.id).shape = v; renderCanvas(); }
   else if (id === 'scolor') { l.stations.find(s => s.id === ui.sel.id).color = v; renderCanvas(); }
+  else if (id === 'snameRot') { l.stations.find(s => s.id === ui.sel.id).nameRot = +v; renderCanvas(); }
+  else if (id === 'shub') {
+    const s = l.stations.find(s => s.id === ui.sel.id);
+    s.hub = e.target.checked;
+    if (!s.hub) {
+      // 乗り換e駅を解除：他の路線からこの駅を削除
+      curMap().lines.forEach(x => { x.stations = x.stations.filter(st => st.id !== s.id); });
+      l.stations.push(s);
+    }
+    save(); renderAll();
+  }
+  else if (e.target.classList && e.target.classList.contains('shubline')) {
+    const s = l.stations.find(s => s.id === ui.sel.id), lid = e.target.dataset.lid;
+    const target = curMap().lines.find(x => x.id === lid);
+    if (!s || !target) return;
+    const has = target.stations.some(st => st.id === s.id);
+    if (e.target.checked && !has) target.stations.push(s);
+    else if (!e.target.checked && has) target.stations = target.stations.filter(st => st.id !== s.id);
+    save(); renderAll();
+  }
   else if (id === 'lwidth') { l.width = +v; e.target.parentNode.firstChild.textContent = '線の太さ(' + v + ')'; renderCanvas(); }
   else if (id === 'lcolor') { l.color = v; renderCanvas(); }
-  else if (id === 'sname') { l.stations.find(s => s.id === ui.sel.id).name = v; renderCanvas(); }
+  else if (id === 'sname') {
+    const s = l.stations.find(s => s.id === ui.sel.id);
+    s.name = v;
+    if (s.hub) curMap().lines.forEach(x => { const st = x.stations.find(st => st.id === s.id); if (st) st.name = v; });
+    renderCanvas();
+  }
   else if (id === 'cname') { l.crossings.find(c => c.id === ui.sel.id).name = v; renderCanvas(); }
   save();
 });
