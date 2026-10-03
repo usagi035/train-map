@@ -51,11 +51,40 @@
   aside input[type=range] { padding:0; }
   aside select { display:block; width:100%; padding:5px 7px; margin-top:3px; border:1px solid #b9c4c1; border-radius:4px; font:inherit; background:#fff; color:var(--ink); }
   aside .note { font-size:12px; color:#52636c; margin:0 0 8px; }
-  #lines, #roadlist { list-style:none; margin:0 0 8px; padding:0; }
-  #lines li, #roadlist li { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:5px; cursor:pointer; }
-  #lines li.on, #roadlist li.on { background:#e3efe9; font-weight:700; }
+  #lines, #roadlist, #imglist { list-style:none; margin:0 0 8px; padding:0; }
+  #lines li, #roadlist li, #imglist li { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:5px; cursor:pointer; }
+  #lines li.on, #roadlist li.on, #imglist li.on { background:#e3efe9; font-weight:700; }
   #lines i, #roadlist i { width:22px; height:6px; border-radius:3px; flex:none; }
   #roadlist i { height:9px; }
+  #imglist li img { width:36px; height:26px; object-fit:cover; border-radius:3px; border:1px solid rgba(0,0,0,.18); background:#fff; flex:none; }
+  #imglist li span { font-size:12px; color:#52636c; }
+  /* レイヤー(路線の表示/非表示・ロック・重ね順) */
+  #lines li { gap:5px; padding:5px 6px; }
+  #lines li.off { background:#f5f7f6; }
+  #lines li.off .lname, #lines li.off > i { opacity:.45; }
+  #lines .lname { flex:1; min-width:0; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #lines .lbtns { display:flex; gap:3px; flex:none; }
+  #lines .lyr { padding:2px 5px; font-size:12px; line-height:1.5; flex:none; }
+  #lines .lbtns .lyr { min-width:26px; }
+  #lines .lyr:disabled { opacity:.35; cursor:default; }
+  #lines .lyr:disabled:hover { background:#fff; }
+  .layeropts { display:grid; grid-template-columns:1fr 1fr; gap:1px 10px; margin-bottom:6px; }
+  .layeropts label { display:flex; align-items:center; gap:6px; margin-bottom:3px; font-size:12.5px; color:var(--ink); cursor:pointer; }
+  .layeropts input[type=checkbox] { display:inline-block; width:auto; margin:0; padding:0; }
+  /* 右パネルのグループ(見出しクリックで開閉するセクション) */
+  .sec { border:1px solid #dde6e3; border-radius:7px; background:#fff; margin-bottom:8px; overflow:hidden; }
+  .sech { display:flex; align-items:center; gap:7px; width:100%; padding:7px 9px; background:#eef3f1; border:0; font-size:13px; font-weight:700; color:#2b3a41; text-align:left; cursor:pointer; }
+  .sech:hover { background:#e6edeb; }
+  .sect { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .secn { flex:none; max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:700; color:#5c6f77; background:#fff; border:1px solid #cfdbd7; border-radius:9px; padding:0 7px; }
+  .seci { flex:none; font-size:10px; color:#6b7c84; transform:rotate(-90deg); transition:transform .15s; }
+  .sec.open > .sech .seci { transform:rotate(0deg); }
+  .secb { padding:9px; border-top:1px solid #dde6e3; }
+  .secb h3 { margin:0 0 6px; font-size:12.5px; }
+  .subh { font-size:12px; font-weight:700; color:#3d5058; margin:12px 0 6px; padding-top:9px; border-top:1px dashed #dbe4e1; }
+  .sec[data-sec="sel"] > .sech { background:#e4f1ec; color:#1f6b4c; }
+  .sec[data-sec="sel"] > .sech:hover { background:#d8ebe3; }
+  .sec[data-sec="sel"] .secn { color:#1f6b4c; border-color:#b6d8ca; }
   /* 乗り換え駅の「接続する駅」リスト(路線ごと) */
   .linkgroup { margin-bottom:10px; padding:8px; border:1px solid #e3ebe8; border-radius:6px; background:#fbfcfc; }
   .linkgroup .lghead { display:flex; align-items:center; gap:6px; font-weight:700; color:#2b3a41; margin-bottom:6px; }
@@ -88,6 +117,7 @@
     <button data-tool="terminal" title="幹線道路とは独立したバスターミナル">バスターミナルを追加</button>
     <button data-tool="road" title="クリックで頂点を追加して道路を引く">幹線道路を引く</button>
     <button data-tool="box">ラベル枠を追加</button>
+    <button id="addimg" title="画像ファイル(PNG・JPGなど)を配置して、移動・リサイズ・下敷きができます">画像を追加</button>
     <label><input type="checkbox" id="snap" checked> グリッドに合わせる</label>
     <label><input type="checkbox" id="autosel" checked> 追加後に選択へ戻る</label>
     <button id="del">選択を削除</button>
@@ -99,6 +129,7 @@
     <button id="imp">読み込み</button>
     <button id="expimg" title="PNG画像として保存">画像書き出し</button>
     <input type="file" id="file" accept=".json" hidden>
+    <input type="file" id="imgfile" accept="image/*" hidden>
   </div>
 </header>
 <main>

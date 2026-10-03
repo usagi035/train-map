@@ -29,5 +29,19 @@ app.on('browser-window-created', (_, win) => {
   });
 });
 
-app.whenReady().then(createWindow);
+// 同じデータ(= userData フォルダ)を2つのプロセスで同時に開くと、Chromiumのキャッシュの
+// ロック競合(「Unable to move the cache / アクセスが拒否されました (0x5)」)と、
+// localStorage(路線図データ)の上書き競合が起きるため、二重起動は受け付けない。
+// 2つ目は既存のウィンドウを前面に出してから終了する。
+// (開発時の `npm start` の二重起動、インストール版と開発版の同時起動もこれで弾けます)
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    const w = BrowserWindow.getAllWindows()[0];
+    if (w) { if (w.isMinimized()) w.restore(); w.focus(); }
+  });
+  app.whenReady().then(createWindow);
+}
 app.on('window-all-closed', () => app.quit());

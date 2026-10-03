@@ -26,13 +26,15 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const BG = '#f4f6f5';
-const mkLine = (name, color) => ({ id: uid(), name, color, width: 8, stations: [], crossings: [] });
+const mkLine = (name, color) => ({ id: uid(), name, color, width: 8, loop: false, stations: [], crossings: [] });
 // 幹線道路(背景)。頂点(pts)の並びで形を表す独立要素
 const mkRoad = (name, color, pts) => ({ id: uid(), name, color, width: 16, pts: pts || [] });
 // バス停(独立要素)。路線・道路に属さない
 const mkBusStop = (name, x, y, kind) => ({ id: uid(), name, x, y, kind: kind || 'stop' });
 const mkMap = name => ({ id: uid(), name, bg: BG, lines: [mkLine('1号線', COLORS[0])], roads: [], stops: [], hubs: [] });
 const mkStation = (name, x, y) => ({ id: uid(), name, x, y, hub: false });
+// 画像要素(srcはdata URL)。zは 'back'(下敷き) / 'front'(前面)
+const mkImage = (src, x, y, w, h) => ({ id: uid(), src, x, y, w, h, opacity: 1, z: 'back' });
 const lw = l => l.width || 8;
 const isDark = hex => { const n = parseInt(hex.slice(1), 16); return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) < 120; };
 
@@ -44,6 +46,10 @@ function migrate(data) {
   data.maps.forEach(m => {
     if (!Array.isArray(m.roads)) m.roads = [];
     if (!Array.isArray(m.stops)) m.stops = [];
+    if (!Array.isArray(m.images)) m.images = [];   // インポートした画像要素
+    // 種類ごとの表示/非表示(レイヤー)。無ければ全部表示
+    if (!m.show || typeof m.show !== 'object') m.show = {};
+    ['road', 'stop', 'box', 'img'].forEach(k => { if (typeof m.show[k] !== 'boolean') m.show[k] = true; });
     if (!Array.isArray(m.hubs)) m.hubs = [];   // 路線に属さない乗り換え駅の置き場所
     if (!Array.isArray(m.lines) || !m.lines.length) { m.lines = [mkLine('1号線', COLORS[0])]; return; }
     // 接続駅リストを「路線ごと」に。旧形式(配列)は、その駅が属する路線の分へまとめる
@@ -141,6 +147,7 @@ const snapStr = () => { try { return JSON.stringify(S); } catch (e) { return '';
 const viewNow = () => ({ map: ui.map, line: ui.line });
 const undoStack = [], redoStack = [];
 let lastSnap = snapStr(), lastView = viewNow(), saveTimer = 0;
+let quotaWarned = false;   // 保存失敗の注意は1セッションに1回だけ表示
 // 表示中の路線図・路線を記録(元に戻したときにどの路線図を開くかに使う)
 const syncView = () => { lastView = viewNow(); };
 function updateUndoButtons() {
@@ -157,7 +164,14 @@ const save = () => {
   if (undoStack.length > 50) undoStack.shift();
   redoStack.length = 0;
   lastSnap = now; lastView = viewNow();
-  try { localStorage.setItem('railmaps', now); } catch (e) {}
+  try { localStorage.setItem('railmaps', now); } catch (e) {
+    // 保存できないと黙っていると消えてしまうので注意を出す(画像を取り込むと容量上限に当たりやすい)
+    console.warn('自動保存に失敗しました:', e);
+    if (!quotaWarned) {
+      quotaWarned = true;
+      alert('自動保存に失敗しました。\n保存領域の上限に達した可能性があります。\n画像が大きい場合は削除するか、「書き出し」でJSONをバックアップしてください。');
+    }
+  }
   updateUndoButtons();
 };
 // 文字入力やスライダーは、連続入力をまとめて1回の履歴にする
@@ -201,14 +215,23 @@ function redo() {
 
 /* ---------- geometry ---------- */
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+// 環状線(l.loop)は「最後の駅 → 最初の駅」の区間も1区間として数える
+const isLoop = l => !!l.loop && l.stations.length >= 2;
+const segCount = l => Math.max(0, isLoop(l) ? l.stations.length : l.stations.length - 1);
+const segA = (l, i) => l.stations[i];
+const segB = (l, i) => isLoop(l) ? l.stations[(i + 1) % l.stations.length] : l.stations[i + 1];
 const segPt = (l, seg, t) => {
-  const a = l.stations[seg], b = l.stations[seg + 1];
+  const a = segA(l, seg), b = segB(l, seg);
+  if (!a) return { x: 0, y: 0 };
+  if (!b) return { x: a.x, y: a.y };
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 };
 function project(l, p) {
-  let best = null; const s = l.stations;
-  for (let i = 0; i < s.length - 1; i++) {
-    const a = s[i], b = s[i + 1], dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+  let best = null;
+  for (let i = 0; i < segCount(l); i++) {
+    const a = segA(l, i), b = segB(l, i);
+    if (!a || !b) continue;
+    const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
     let t = len2 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2 : 0;
     t = clamp(t, 0, 1);
     const q = { x: a.x + dx * t, y: a.y + dy * t }, d = Math.hypot(p.x - q.x, p.y - q.y);
@@ -217,8 +240,9 @@ function project(l, p) {
   return best;
 }
 // 駅の追加・削除をしても、踏切が元の位置に残るよう付け直す
-function keepCrossings(l, fn) {
-  const ps = l.crossings.map(c => segPt(l, c.seg, c.t));
+// ps を渡すと、それを位置の基準にする(環状線のON/OFFなど区間の数が変わるとき用)
+function keepCrossings(l, fn, ps) {
+  if (!ps) ps = l.crossings.map(c => segPt(l, c.seg, c.t));
   fn();
   l.crossings = l.crossings.map((c, i) => {
     const r = project(l, ps[i]);
@@ -234,21 +258,71 @@ const clearBulk = () => { ui.bulk = []; ui.bulkRect = null; ui.bulkMap = null; }
 const rectOf = (a, z) => ({ x0: Math.min(a.x, z.x), y0: Math.min(a.y, z.y), x1: Math.max(a.x, z.x), y1: Math.max(a.y, z.y) });
 // 中心が矩形に入っていれば選択(少し余裕を持たせる)
 const inBox = (p, b, pad) => p.x >= b.x0 - pad && p.x <= b.x1 + pad && p.y >= b.y0 - pad && p.y <= b.y1 + pad;
+/* ---------- レイヤー(表示/非表示・重ね順・編集ロック) ---------- */
+// 種類ごとの表示/非表示(幹線道路・バス停・ラベル枠・画像)
+const showEl = (m, k) => !m.show || m.show[k] !== false;
+// 駅がロック中の路線に属しているか(属している路線の1つでもロック中ならロック)
+const isStationLocked = s => linesOf(s.id).some(l => l.lock);
+// クリック対象がロック中(編集できない)の要素か
+function hitLocked(el) {
+  if (!el) return false;
+  if (el.dataset.t === 'st' || el.dataset.t === 'stname') {
+    const s = findStation(el.dataset.id); return !!s && isStationLocked(s);
+  }
+  if (el.dataset.t === 'cx') {
+    const o = curMap().lines.find(x => x.crossings.some(c => c.id === el.dataset.id));
+    return !!o && !!o.lock;
+  }
+  return false;
+}
+// 表示設定を変えたあと、選択中の要素がまだ見えているか
+function selVisible(sel) {
+  if (!sel) return true;
+  const m = curMap();
+  if (sel.t === 'st') {
+    const s = findStation(sel.id); if (!s) return false;
+    const ls = linesOf(sel.id);
+    return !ls.length || ls.some(x => !x.hidden);   // 路線外の乗り換え駅は常に表示
+  }
+  if (sel.t === 'cx') { const o = m.lines.find(x => x.crossings.some(c => c.id === sel.id)); return !!o && !o.hidden; }
+  if (sel.t === 'road') return showEl(m, 'road');
+  if (sel.t === 'stop') return showEl(m, 'stop');
+  if (sel.t === 'bx') return showEl(m, 'box');
+  if (sel.t === 'img') return showEl(m, 'img');
+  return true;
+}
+// 非表示・ロック中の路線には駅や踏切を追加できない(理由を出して戻す)
+function lineEditBlocked() {
+  const l = curLine();
+  if (l.lock) { alert('「' + l.name + '」はロック中です。\n右パネルの 🔒 を解除すると編集できます。'); return true; }
+  if (l.hidden) { alert('「' + l.name + '」は非表示です。\n右パネルの 👁 で表示に戻すと追加できます。'); return true; }
+  return false;
+}
 // 矩形に重なる要素を集める(駅・乗り換え駅・バス停・踏切・ラベル枠・幹線道路)
 function pickInBox(m, b) {
   const hit = [], has = id => hit.some(x => x.id === id);
-  m.lines.forEach(l => l.stations.forEach(s => { if (!has(s.id) && inBox(s, b, 12)) hit.push({ t: 'st', id: s.id }); }));
+  // 非表示・ロック中の路線は選択対象にしない
+  m.lines.forEach(l => {
+    if (l.hidden || l.lock) return;
+    l.stations.forEach(s => { if (!has(s.id) && !isStationLocked(s) && inBox(s, b, 12)) hit.push({ t: 'st', id: s.id }); });
+  });
   (m.hubs || []).forEach(s => { if (!has(s.id) && inBox(s, b, 12)) hit.push({ t: 'st', id: s.id }); });
-  (m.stops || []).forEach(s => { if (!has(s.id) && inBox(s, b, 14)) hit.push({ t: 'stop', id: s.id }); });
-  m.lines.forEach(l => l.crossings.forEach(c => {
-    if (l.stations.length < 2 || has(c.id)) return;
-    const p = segPt(l, c.seg, c.t);
-    if (inBox(p, b, 16)) hit.push({ t: 'cx', id: c.id });
-  }));
-  (m.boxes || []).forEach(x => {
+  if (showEl(m, 'stop')) (m.stops || []).forEach(s => { if (!has(s.id) && inBox(s, b, 14)) hit.push({ t: 'stop', id: s.id }); });
+  m.lines.forEach(l => {
+    if (l.hidden || l.lock) return;
+    l.crossings.forEach(c => {
+      if (l.stations.length < 2 || has(c.id)) return;
+      const p = segPt(l, c.seg, c.t);
+      if (inBox(p, b, 16)) hit.push({ t: 'cx', id: c.id });
+    });
+  });
+  if (showEl(m, 'box')) (m.boxes || []).forEach(x => {
     if (x.x + x.w >= b.x0 && x.x <= b.x1 && x.y + x.h >= b.y0 && x.y <= b.y1) hit.push({ t: 'bx', id: x.id });
   });
-  (m.roads || []).forEach(r => {
+  if (showEl(m, 'img')) (m.images || []).forEach(x => {
+    if (x.x + x.w >= b.x0 && x.x <= b.x1 && x.y + x.h >= b.y0 && x.y <= b.y1) hit.push({ t: 'img', id: x.id });
+  });
+  if (showEl(m, 'road')) (m.roads || []).forEach(r => {
     if (!r.pts.length || has(r.id)) return;
     const inAll = r.pts.every(p => p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1);
     if (inAll || r.pts.some(p => inBox(p, b, 8))) hit.push({ t: 'road', id: r.id });
@@ -284,7 +358,20 @@ function renderCanvas() {
   let h = `<defs><pattern id="g" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="${fg}" stroke-opacity=".1" stroke-width="1"/></pattern></defs>` +
           `<rect width="${cw}" height="${ch}" fill="${bg}"/><rect width="${cw}" height="${ch}" fill="url(#g)"/>` +
           `<rect width="${cw}" height="${ch}" fill="none" stroke="${fg}" stroke-opacity=".35" stroke-width="2" stroke-dasharray="8 6"/>`;
+  // 画像要素(背面=下敷き / 前面)。選択中は枠とリサイズ用の■を表示する
+  const drawImages = zone => (m.images || []).filter(im => (im.z || 'back') === zone).forEach(im => {
+    if (!showEl(m, 'img')) return;
+    const sel = ui.sel && ui.sel.t === 'img' && ui.sel.id === im.id;
+    // 背面(下敷き)は選択中以外すり抜けにして、下の要素の選択や□選択を邪魔しない
+    const pe = (zone === 'back' && !sel) ? ' pointer-events="none"' : '';
+    h += `<g data-t="img" data-id="${im.id}"${pe}>` +
+         `<image href="${esc(im.src)}" x="${im.x}" y="${im.y}" width="${Math.max(1, im.w)}" height="${Math.max(1, im.h)}" opacity="${im.opacity == null ? 1 : im.opacity}" preserveAspectRatio="none"/>` +
+         (sel ? `<rect x="${im.x - 3}" y="${im.y - 3}" width="${im.w + 6}" height="${im.h + 6}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` +
+                `<rect data-t="imgr" data-id="${im.id}" x="${im.x + im.w - 6}" y="${im.y + im.h - 6}" width="12" height="12" fill="${fg}" style="cursor:nwse-resize"/>` : '') + '</g>';
+  });
+  drawImages('back');   // 背面は道路・ラベル枠・線路より下に敷く
   (m.boxes || []).forEach(b => {
+    if (!showEl(m, 'box')) return;
     const sel = ui.sel && ui.sel.t === 'bx' && ui.sel.id === b.id, tc = isDark(b.fill) ? '#fff' : '#1f2d36', n = [...(b.text || '')].length;
     const fs = Math.max(8, Math.min(14, b.h - 8, (b.w - 8) / Math.max(1, n)));
     h += `<g data-t="bx" data-id="${b.id}"><rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="3" fill="${b.fill}" fill-opacity=".92" stroke="${fg}" stroke-opacity=".45" stroke-width="1.5"/>` +
@@ -293,7 +380,7 @@ function renderCanvas() {
   });
   // 0) 幹線道路(背景・独立要素)
   (m.roads || []).forEach(r => {
-    if (r.pts.length < 2) return;
+    if (r.pts.length < 2 || !showEl(m, 'road')) return;
     const sel = ui.sel && ui.sel.t === 'road' && ui.sel.id === r.id;
     const pts = r.pts.map(p => p.x + ',' + p.y).join(' ');
     h += `<g data-t="road" data-id="${r.id}">` +
@@ -314,12 +401,14 @@ function renderCanvas() {
     }
   }
   const xf = (l, c) => {
-    const p = segPt(l, c.seg, c.t), a = l.stations[c.seg], b = l.stations[c.seg + 1];
+    const p = segPt(l, c.seg, c.t), a = segA(l, c.seg), b = segB(l, c.seg);
+    if (!a || !b) return { p, t: `translate(${p.x} ${p.y})` };
     return { p, t: `translate(${p.x} ${p.y}) rotate(${Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI})` };
   };
   const dims = l => { const w = lw(l); return { half: Math.max(7, w / 2 + 3), rh: Math.max(26, w / 2 + 20) }; };
   // 1) 踏切の道路
   m.lines.forEach(l => {
+    if (l.hidden) return;   // 非表示の路線は描かない
     const { half, rh } = dims(l);
     l.crossings.forEach(c => {
       h += `<g transform="${xf(l, c).t}"><rect x="${-half}" y="${-rh}" width="${half * 2}" height="${rh * 2}" rx="2" fill="#9aa5a9"/></g>`;
@@ -327,17 +416,22 @@ function renderCanvas() {
   });
   // 2) 線路と駅間隔
   m.lines.forEach(l => {
+    if (l.hidden) return;   // 非表示の路線は描かない
     const s = l.stations, on = l.id === ui.line;
-    if (s.length > 1)
-      h += `<polyline data-t="line" data-l="${l.id}" points="${s.map(p => p.x + ',' + p.y).join(' ')}" fill="none" stroke="${l.color}" stroke-width="${lw(l)}" stroke-linecap="round" stroke-linejoin="round" opacity="${on ? 1 : .55}"/>`;
-    for (let i = 0; i < s.length - 1; i++) {
-      const a = s[i], b = s[i + 1], len = dist(a, b) || 1, off = lw(l) / 2 + 12;
+    if (s.length > 1) {
+      // 環状線は最初の駅に戻る点を足して輪にする
+      const pts = (isLoop(l) ? s.concat([s[0]]) : s).map(p => p.x + ',' + p.y).join(' ');
+      h += `<polyline data-t="line" data-l="${l.id}" points="${pts}" fill="none" stroke="${l.color}" stroke-width="${lw(l)}" stroke-linecap="round" stroke-linejoin="round" opacity="${on ? 1 : .55}"/>`;
+    }
+    for (let i = 0; i < segCount(l); i++) {
+      const a = segA(l, i), b = segB(l, i), len = dist(a, b) || 1, off = lw(l) / 2 + 12;
       const mx = (a.x + b.x) / 2 - (b.y - a.y) / len * off, my = (a.y + b.y) / 2 + (b.x - a.x) / len * off;
       h += `<text x="${mx}" y="${my + 4}" text-anchor="middle" font-size="11" fill="${sub}" ${halo}>${(len / G).toFixed(1)}</text>`;
     }
   });
   // 3) 踏切の記号
   m.lines.forEach(l => {
+    if (l.hidden) return;   // 非表示の路線は描かない
     const { half, rh } = dims(l);
     l.crossings.forEach(c => {
       const { p, t } = xf(l, c), sel = ui.sel && ui.sel.t === 'cx' && ui.sel.id === c.id;
@@ -382,12 +476,13 @@ function renderCanvas() {
       h += `<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="${c}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>`;
     }));
   };
-  m.lines.forEach(l => l.stations.forEach(conn));
+  m.lines.forEach(l => { if (!l.hidden) l.stations.forEach(conn); });
   (m.hubs || []).forEach(conn);
-  m.lines.forEach(l => l.stations.forEach(s => drawStation(s, l)));
+  m.lines.forEach(l => { if (!l.hidden) l.stations.forEach(s => drawStation(s, l)); });
   (m.hubs || []).forEach(s => drawStation(s, null));   // 路線外の乗り換え駅
   // 5) バス停(独立要素・最前面)
   (m.stops || []).forEach(s => {
+    if (!showEl(m, 'stop')) return;
     const sel = ui.sel && ui.sel.t === 'stop' && ui.sel.id === s.id;
     const c = s.color || STOP_COLOR;
     let body, ext;
@@ -405,6 +500,7 @@ function renderCanvas() {
     h += `<g data-t="stop" data-id="${s.id}">${body}` +
          (sel ? `<circle cx="${s.x}" cy="${s.y}" r="${ext + 5}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` : '') + nm + '</g>';
   });
+  drawImages('front');   // 前面はすべての上に重ねる
   // 矩形選択(□)のプレビューと、まとめて選択中の要素のハイライト
   const bl = getBulk();
   const bandBox = band ? rectOf(band.a, band.b) : (bl.length ? ui.bulkRect : null);
@@ -419,6 +515,7 @@ function renderCanvas() {
       if (s) { const e = s.kind === 'terminal' ? 23 : 15; h += mkBox(s.x - e, s.y - e, e * 2, e * 2); }
     }
     else if (it.t === 'bx') { const b = (m.boxes || []).find(x => x.id === it.id); if (b) h += mkBox(b.x - 4, b.y - 4, b.w + 8, b.h + 8); }
+    else if (it.t === 'img') { const im = (m.images || []).find(x => x.id === it.id); if (im) h += mkBox(im.x - 4, im.y - 4, im.w + 8, im.h + 8); }
     else if (it.t === 'road') {
       const r = (m.roads || []).find(x => x.id === it.id);
       if (r && r.pts.length > 1) h += `<polyline points="${r.pts.map(p => p.x + ',' + p.y).join(' ')}" fill="none" stroke="${BAND_COLOR}" stroke-width="2" stroke-dasharray="5 3" pointer-events="none"/>`;
@@ -432,9 +529,27 @@ function renderCanvas() {
   document.getElementById('cv').innerHTML = h;
 }
 
+/* ---------- 右パネルのグループ化(開閉できるセクション) ---------- */
+// 見出しをクリックすると開閉。開閉状態は localStorage に覚えておく
+let acc = {};
+try { acc = JSON.parse(localStorage.getItem('railacc')) || {}; } catch (e) { acc = {}; }
+if (acc.map == null) acc.map = false;   // 路線図の設定(名前・背景・削除)は既定で閉じる
+const accOpen = id => acc[id] !== false;
+const saveAcc = () => { try { localStorage.setItem('railacc', JSON.stringify(acc)); } catch (e) {} };
+let selKey = '';   // 選択が変わったときは「選択中」を開いたままにする
+function sec(id, title, body, badge) {
+  const open = accOpen(id);
+  return `<section class="sec${open ? ' open' : ''}" data-sec="${id}">` +
+    `<button type="button" class="sech" data-sech="${id}" aria-expanded="${open}" title="${title}を開閉">` +
+    `<span class="sect">${title}</span>` +
+    (badge == null ? '' : `<span class="secn">${badge}</span>`) +
+    '<span class="seci">▾</span></button>' +
+    (open ? `<div class="secb">${body}</div>` : '') +
+    '</section>';
+}
 function renderSide() {
   const m = curMap(), l = curLine();
-  let sel = '';
+  let sel = '', selT = '';
   if (ui.sel) {
     if (ui.sel.t === 'st') {
       const s = findStation(ui.sel.id);
@@ -443,52 +558,51 @@ function renderSide() {
         const ls = linesOf(s.id);   // 属する路線(乗り換え駅は0本のこともある)
         const gl = ls.some(x => x.id === l.id) ? l : ls[0];   // 間隔を表示する路線
         const i = gl ? gl.stations.findIndex(x => x.id === s.id) : -1;
-        const head = ls.length ? '選択中の駅' : '選択中の乗り換え駅(路線外)';
-        sel = `<h3>${head}</h3><label>駅名<input id="sname" value="${esc(s.name)}"></label>` +
+        selT = (ls.length ? '駅' : '乗り換え駅') + '「' + esc(s.name) + '」';
+        sel = `<label>駅名<input id="sname" value="${esc(s.name)}"></label>` +
           `<label>形<select id="sshape">${Object.entries(SHAPES).map(([k, v]) => `<option value="${k}"${(s.shape || 'circle') === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>` +
           `<div class="row" style="align-items:center"><span>色</span><input type="color" id="scolor" value="${s.color || (ls.length ? ls[0].color : STOP_COLOR)}"><button id="sreset">路線の色に戻す</button></div>` +
           `<label>駅名の向き<select id="snameRot"><option value="0"${(s.nameRot || 0) === 0 ? ' selected' : ''}>普通</option><option value="45"${(s.nameRot || 0) === 45 ? ' selected' : ''}>斜め(45°)</option><option value="90"${(s.nameRot || 0) === 90 ? ' selected' : ''}>縦(90°)</option></select></label>` +
           `<label><input type="checkbox" id="shub"${s.hub ? ' checked' : ''}> 乗り換え駅(ターミナルハブ)</label>` +
           (s.hub ? '<div class="note" style="margin-bottom:4px">属する路線:</div>' +
             m.lines.map(x => `<label style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><input type="checkbox" class="shubline" data-lid="${x.id}"${x.stations.some(st => st.id === s.id) ? ' checked' : ''}> <i style="display:inline-block;width:18px;height:5px;border-radius:3px;background:${x.color};flex:none"></i>${esc(x.name)}</label>`).join('') +
-            `<p class="note">${ls.length ? 'チェックを全部外すと、どの路線にも属さない乗り換え駅(路線外)になります。' : '現在、どの路線にも属していません(路線外)。チェックした路線に組み込めます。'}</p>` : '');
-        if (s.hub) {
-          // 接続する駅:路線ごとに別のリスト(データとして保持。描画には影響しない)
-          const colorOf = id => { const c = linesOf(id)[0]; return c ? c.color : STOP_COLOR; };
-          linkGroups(m, s).forEach(gr => {
-            const gl = gr.lid === OFF_LINK ? null : m.lines.find(x => x.id === gr.lid);
-            const rest = allStations(m).filter(x => x.id !== s.id && !gr.ids.includes(x.id));
-            const same = gl ? rest.filter(x => gl.stations.some(y => y.id === x.id)) : rest;
-            const other = gl ? rest.filter(x => !gl.stations.some(y => y.id === x.id)) : [];
-            const opt = arr => arr.map(x => { const c = linesOf(x.id)[0]; return `<option value="${x.id}">${esc(x.name)}${c ? ' (' + esc(c.name) + ')' : ' (路線外)'}</option>`; }).join('');
-            const options = (same.length && other.length)
-              ? `<optgroup label="${esc(gl.name)}の駅">${opt(same)}</optgroup><optgroup label="そのほかの駅">${opt(other)}</optgroup>`
-              : opt(same.length ? same : other);
-            let g = `<div class="linkgroup"><div class="note lghead"><i style="background:${gr.color}"></i>${esc(gr.name)} の接続駅:</div>`;
-            g += gr.ids.length
-              ? `<ul class="linklist" data-lid="${gr.lid}">` + gr.ids.map((id, k) => {
-                  const x = findStation(id); if (!x) return '';
-                  // 路線名が重複する駅もあるので、その路線の駅以外は路線名を併記する
-                  const c = linesOf(id)[0];
-                  const label = esc(x.name + (!gl || !c || c.id !== gl.id ? ' (' + (c ? c.name : '路線外') + ')' : ''));
-                  return `<li data-id="${id}" draggable="true">` +
-                    `<span class="lhandle" title="ドラッグで並べ替え">⇅</span>` +
-                    `<i style="background:${colorOf(id)}"></i>` +
-                    `<span class="lname">${label}</span>` +
-                    `<span class="lbtns">` +
-                      `<button class="lup" title="上へ移動"${k === 0 ? ' disabled' : ''}>↑</button>` +
-                      `<button class="ldown" title="下へ移動"${k === gr.ids.length - 1 ? ' disabled' : ''}>↓</button>` +
-                      `<button class="ldel" title="この接続を外す">✕</button>` +
-                    `</span></li>`;
-                }).join('') + '</ul>'
-              : '<p class="note">まだ接続駅がありません。</p>';
-            g += rest.length
-              ? `<div class="row" data-lid="${gr.lid}"><select class="linksel" style="flex:1;min-width:0">${options}</select><button class="linkadd">追加</button></div>`
-              : '<p class="note">追加できる駅がありません。</p>';
-            sel += g + '</div>';
-          });
-          sel += '<p class="note">接続は路線ごとに別のリストで持ちます。順番は ↑↓ かドラッグで変えられます。登録した接続は、乗り換え駅から接続先の駅へ<b>通常の路線と同じ線</b>で描画され、色と太さは接続先の駅の路線です(路線外の接続先はグレー)。</p>';
-        }
+            `<p class="note">${ls.length ? 'チェックを全部外すと、どの路線にも属さない乗り換え駅(路線外)になります。' : '現在、どの路線にも属していません(路線外)。チェックした路線に組み込めます。'}</p>`
+            : '<p class="note">チェックを入れると、後からこの駅を乗り換え駅に変更できます(チェックを外すと通常の駅に戻ります)。</p>');
+        // 接続する駅:路線ごとに別のリスト(普通の駅でも登録・編集できる)
+        const colorOf = id => { const c = linesOf(id)[0]; return c ? c.color : STOP_COLOR; };
+        linkGroups(m, s).forEach(gr => {
+          const gl = gr.lid === OFF_LINK ? null : m.lines.find(x => x.id === gr.lid);
+          const rest = allStations(m).filter(x => x.id !== s.id && !gr.ids.includes(x.id));
+          const same = gl ? rest.filter(x => gl.stations.some(y => y.id === x.id)) : rest;
+          const other = gl ? rest.filter(x => !gl.stations.some(y => y.id === x.id)) : [];
+          const opt = arr => arr.map(x => { const c = linesOf(x.id)[0]; return `<option value="${x.id}">${esc(x.name)}${c ? ' (' + esc(c.name) + ')' : ' (路線外)'}</option>`; }).join('');
+          const options = (same.length && other.length)
+            ? `<optgroup label="${esc(gl.name)}の駅">${opt(same)}</optgroup><optgroup label="そのほかの駅">${opt(other)}</optgroup>`
+            : opt(same.length ? same : other);
+          let g = `<div class="linkgroup"><div class="note lghead"><i style="background:${gr.color}"></i>${esc(gr.name)} の接続駅:</div>`;
+          g += gr.ids.length
+            ? `<ul class="linklist" data-lid="${gr.lid}">` + gr.ids.map((id, k) => {
+                const x = findStation(id); if (!x) return '';
+                // 路線名が重複する駅もあるので、その路線の駅以外は路線名を併記する
+                const c = linesOf(id)[0];
+                const label = esc(x.name + (!gl || !c || c.id !== gl.id ? ' (' + (c ? c.name : '路線外') + ')' : ''));
+                return `<li data-id="${id}" draggable="true">` +
+                  `<span class="lhandle" title="ドラッグで並べ替え">⇅</span>` +
+                  `<i style="background:${colorOf(id)}"></i>` +
+                  `<span class="lname">${label}</span>` +
+                  `<span class="lbtns">` +
+                    `<button class="lup" title="上へ移動"${k === 0 ? ' disabled' : ''}>↑</button>` +
+                    `<button class="ldown" title="下へ移動"${k === gr.ids.length - 1 ? ' disabled' : ''}>↓</button>` +
+                    `<button class="ldel" title="この接続を外す">✕</button>` +
+                  `</span></li>`;
+              }).join('') + '</ul>'
+            : '<p class="note">まだ接続駅がありません。</p>';
+          g += rest.length
+            ? `<div class="row" data-lid="${gr.lid}"><select class="linksel" style="flex:1;min-width:0"><option value="">追加する駅を選択…</option>${options}</select></div>`
+            : '<p class="note">追加できる駅がありません。</p>';
+          sel += g + '</div>';
+        });
+        sel += '<p class="note">接続は路線ごとに別のリストで持ちます。セレクトで駅を選ぶと<b>その場で追加</b>され、順番は ↑↓ かドラッグで変えられます。行をクリックすると、その駅を選択してパネルを切り替えます。登録した接続は、この駅から接続先の駅へ<b>通常の路線と同じ線</b>で描画され、色と太さは接続先の駅の路線です(路線外の接続先はグレー)。</p>';
         if (gl && i > 0) sel += `<label>前の駅との間隔(マス)<input id="gap" data-lid="${gl.id}" type="number" min="0.5" step="0.5" value="${(dist(gl.stations[i - 1], s) / G).toFixed(1)}"></label><p class="note">変更すると、これ以降の駅も一緒に動きます。</p>`;
       }
     } else if (ui.sel.t === 'stop') {
@@ -496,7 +610,8 @@ function renderSide() {
       if (!s) ui.sel = null;
       else {
         const kind = s.kind || 'stop';
-        sel = `<h3>${kind === 'terminal' ? '選択中のバスターミナル' : '選択中のバス停'}</h3><label>名称<input id="bsname" value="${esc(s.name)}"></label>` +
+        selT = (kind === 'terminal' ? 'バスターミナル' : 'バス停') + '「' + esc(s.name) + '」';
+        sel = `<label>名称<input id="bsname" value="${esc(s.name)}"></label>` +
           `<label>種別<select id="bskind">${Object.entries(STOP_KINDS).map(([k, v]) => `<option value="${k}"${kind === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>` +
           `<div class="row" style="align-items:center"><span>色</span><input type="color" id="bscolor" value="${s.color || STOP_COLOR}"><button id="bsreset">標準色に戻す</button></div>` +
           `<label>名称の向き<select id="bsnameRot"><option value="0"${(s.nameRot || 0) === 0 ? ' selected' : ''}>普通</option><option value="45"${(s.nameRot || 0) === 45 ? ' selected' : ''}>斜め(45°)</option><option value="90"${(s.nameRot || 0) === 90 ? ' selected' : ''}>縦(90°)</option></select></label>` +
@@ -505,41 +620,101 @@ function renderSide() {
     } else if (ui.sel.t === 'road') {
       const r = (m.roads || []).find(x => x.id === ui.sel.id);
       if (!r) ui.sel = null;
-      else sel = `<h3>選択中の幹線道路</h3><label>名前<input id="rname" value="${esc(r.name)}"></label>` +
+      else {
+        selT = '幹線道路「' + esc(r.name) + '」';
+        sel = `<label>名前<input id="rname" value="${esc(r.name)}"></label>` +
         `<div class="row" style="align-items:center"><span>色</span><input type="color" id="rcolor" value="${r.color}"></div>` +
         `<label>幅(${r.width})<input type="range" id="rwidth" min="6" max="40" step="1" value="${r.width}"></label>` +
         `<div class="row"><button id="droad">この道路を削除</button></div>` +
         `<p class="note">頂点(□)をドラッグすると形を調整できます。道路全体のドラッグで移動します。</p>`;
+      }
     } else if (ui.sel.t === 'bx') {
       const b = (m.boxes || []).find(b => b.id === ui.sel.id);
       if (!b) ui.sel = null;
-      else sel = `<h3>選択中のラベル枠</h3><label>ラベル<input id="btext" value="${esc(b.text || '')}"></label>` +
+      else {
+        selT = 'ラベル枠「' + esc(b.text || '') + '」';
+        sel = `<label>ラベル<input id="btext" value="${esc(b.text || '')}"></label>` +
         `<div class="row" style="align-items:center"><span>色</span><input type="color" id="bfill" value="${b.fill}"></div>` +
         `<div class="row"><label style="flex:1">幅(マス)<input id="bw" type="number" min="1" step="1" value="${Math.round(b.w / G)}"></label><label style="flex:1">高さ(マス)<input id="bh" type="number" min="1" step="1" value="${Math.round(b.h / G)}"></label></div>`;
+      }
+    } else if (ui.sel.t === 'img') {
+      const im = (m.images || []).find(x => x.id === ui.sel.id);
+      if (!im) ui.sel = null;
+      else {
+        const op = Math.round((im.opacity == null ? 1 : im.opacity) * 100);
+        selT = '画像';
+        sel = `<label>不透明度(${op}%)<input id="iop" type="range" min="10" max="100" step="5" value="${op}"></label>` +
+          `<label>重ねる順<select id="izone"><option value="back"${(im.z || 'back') === 'back' ? ' selected' : ''}>背面(下敷き)</option><option value="front"${im.z === 'front' ? ' selected' : ''}>前面(線路の上)</option></select></label>` +
+          `<div class="row"><button id="ichg">画像を変更</button><button id="idel">削除</button></div>` +
+          `<p class="note">ドラッグで移動、右下の■をドラッグで大きさを変更します。□(矩形選択)や Delete キーでもまとめて操作できます。下敷きにすると道路や線路より下に描画されます。</p>`;
+      }
     } else {
       const c = l.crossings.find(c => c.id === ui.sel.id);
       if (!c) ui.sel = null;
-      else sel = `<h3>選択中の踏切</h3><label>名前<input id="cname" value="${esc(c.name)}"></label>`;
+      else {
+        selT = c.name ? '踏切「' + esc(c.name) + '」' : '踏切';
+        sel = `<label>名前<input id="cname" value="${esc(c.name)}"></label>`;
+      }
     }
   }
   const bulk = getBulk();
   if (!ui.sel && bulk.length) {
-    sel = `<h3>□で ${bulk.length}個を選択中</h3><p class="note">Delete キー(または「選択を削除」)でまとめて削除します。Esc かクリックで解除します</p>`;
+    selT = '□で ' + bulk.length + '個を選択';
+    sel = '<p class="note">Delete キー(または「選択を削除」)でまとめて削除します。Esc かクリックで解除します</p>';
   }
-  document.getElementById('side').innerHTML = sel +
-    `<h3>路線図の名前</h3><input id="mname" value="${esc(m.name)}">` +
-    '<div class="row" style="align-items:center;margin-top:8px"><span>背景色</span><input type="color" id="mbg" value="' + (m.bg || BG) + '"></div>' +
-    '<div class="row"><button id="newwin">別ウィンドウで開く</button></div><div class="row"><button id="dmap">この路線図を削除</button></div>' +
-    '<h3>路線</h3><ul id="lines">' +
-    m.lines.map(x => `<li data-id="${x.id}" class="${x.id === l.id ? 'on' : ''}"><i style="background:${x.color}"></i>${esc(x.name)}</li>`).join('') +
+  // 選択が新しくなったら「選択中」のグループは開いたままにする(閉じたままだと何も出ないため)
+  const k = ui.sel ? ui.sel.t + ':' + ui.sel.id : (sel ? 'bulk' : '');
+  if (k && k !== selKey && !accOpen('sel')) { acc.sel = true; saveAcc(); }
+  selKey = k;
+  // ---- グループごとにまとめる(見出しクリックで開閉) ----
+  const linesBody = '<ul id="lines">' +
+    m.lines.slice().reverse().map(x => {
+      const i = m.lines.indexOf(x);
+      return `<li data-id="${x.id}" class="${x.id === l.id ? 'on' : ''}${x.hidden ? ' off' : ''}">` +
+        `<button class="lyr" data-act="eye" title="${x.hidden ? '表示する' : '非表示にする'}">${x.hidden ? '🚫' : '👁'}</button>` +
+        `<button class="lyr" data-act="lock" title="${x.lock ? 'ロック解除' : '編集ロック(選択・ドラッグ・削除を禁止)'}">${x.lock ? '🔒' : '🔓'}</button>` +
+        `<i style="background:${x.color}"></i>` +
+        `<span class="lname">${esc(x.name)}${isLoop(x) ? ' <span style="font-size:11px;opacity:.65">環</span>' : ''}</span>` +
+        `<span class="lbtns">` +
+        `<button class="lyr" data-act="up" title="手前にする"${i === m.lines.length - 1 ? ' disabled' : ''}>↑</button>` +
+        `<button class="lyr" data-act="down" title="奥にする"${i === 0 ? ' disabled' : ''}>↓</button>` +
+        `</span></li>`;
+    }).join('') +
     '</ul><button id="addline">路線を追加</button>' +
-    `<h3>選択中の路線</h3><div class="row"><input id="lname" value="${esc(l.name)}"><input type="color" id="lcolor" value="${l.color}"></div>` +
-    `<label>線の太さ(${lw(l)})<input type="range" id="lwidth" min="2" max="24" step="1" value="${lw(l)}"></label><button id="dline">この路線を削除</button>` +
-    '<h3>幹線道路</h3><ul id="roadlist">' +
+    '<p class="note">リストの<b>上にある路線ほど手前に描画</b>されます。👁で表示/非表示、🔒で編集ロック、↑↓で重ね順の変更(並べ替えても線の形は変わりません)。</p>' +
+    '<div class="subh">その他の表示</div><div class="layeropts">' +
+    `<label><input type="checkbox" class="showel" data-k="road"${showEl(m, 'road') ? ' checked' : ''}>幹線道路</label>` +
+    `<label><input type="checkbox" class="showel" data-k="stop"${showEl(m, 'stop') ? ' checked' : ''}>バス停</label>` +
+    `<label><input type="checkbox" class="showel" data-k="box"${showEl(m, 'box') ? ' checked' : ''}>ラベル枠</label>` +
+    `<label><input type="checkbox" class="showel" data-k="img"${showEl(m, 'img') ? ' checked' : ''}>画像</label>` +
+    '</div>' +
+    '<p class="note">駅と踏切は所属する路線に従います(路線を隠すと、その路線の駅・踏切も隠れます)。</p>';
+  const lineBody =
+    `<div class="row"><input id="lname" value="${esc(l.name)}"><input type="color" id="lcolor" value="${l.color}"></div>` +
+    `<label>線の太さ(${lw(l)})<input type="range" id="lwidth" min="2" max="24" step="1" value="${lw(l)}"></label>` +
+    `<label><input type="checkbox" id="lloop"${l.loop ? ' checked' : ''}> 環状線(最後と最初をつなぐ)</label>` +
+    `<p class="note">${l.loop ? '輪になって描画されます。閉じた区間にも駅・踏切を置けます。' : 'チェックすると最後の駅と最初の駅がつながり、輪になります(駅は3つ以上が目安)。'}</p><button id="dline">この路線を削除</button>`;
+  const roadBody = '<ul id="roadlist">' +
     ((m.roads || []).length
       ? m.roads.map(r => `<li data-rid="${r.id}" class="${ui.sel && ui.sel.t === 'road' && ui.sel.id === r.id ? 'on' : ''}"><i style="background:${r.color}"></i>${esc(r.name)}</li>`).join('')
       : '<li style="opacity:.6;cursor:default">まだありません</li>') +
     '</ul><button id="addroadp">幹線道路を引く</button>';
+  const imgBody = '<ul id="imglist">' +
+    ((m.images || []).length
+      ? m.images.map(x => `<li data-iid="${x.id}" class="${ui.sel && ui.sel.t === 'img' && ui.sel.id === x.id ? 'on' : ''}"><img src="${esc(x.src)}" alt=""><span>${x.z === 'front' ? '前面' : '下敷き'}</span></li>`).join('')
+      : '<li style="opacity:.6;cursor:default">まだありません</li>') +
+    '</ul><button id="addimgp">画像を追加</button>';
+  const mapBody = `<label>路線図の名前<input id="mname" value="${esc(m.name)}"></label>` +
+    '<div class="row" style="align-items:center"><span>背景色</span><input type="color" id="mbg" value="' + (m.bg || BG) + '"></div>' +
+    '<div class="row"><button id="newwin">別ウィンドウで開く</button></div>' +
+    '<div class="row"><button id="dmap">この路線図を削除</button></div>';
+  document.getElementById('side').innerHTML =
+    (sel ? sec('sel', '選択中：' + selT, sel) : '') +
+    sec('lines', '路線(レイヤー)', linesBody, m.lines.length) +
+    sec('line', '選択中の路線', lineBody, esc(l.name)) +
+    sec('roads', '幹線道路', roadBody, (m.roads || []).length) +
+    sec('images', '画像', imgBody, (m.images || []).length) +
+    sec('map', '路線図の設定', mapBody, null);
 }
 /* ---------- 左パネル: 選択中の路線の駅(並べ替え) ---------- */
 function stationGlyph(s, l) {
@@ -566,7 +741,9 @@ function renderLeft() {
         `<button class="sdown" title="下へ移動"${i === l.stations.length - 1 ? ' disabled' : ''}>↓</button>` +
       '</span></li>';
   }).join('');
-  el.innerHTML = `<h3><i style="background:${l.color}"></i>${esc(l.name)} の駅</h3>` +
+  el.innerHTML = `<h3><i style="background:${l.color}"></i>${esc(l.name)} の駅` +
+    (l.hidden ? ' <span style="font-size:11px;opacity:.75">(非表示)</span>' : '') +
+    (l.lock ? ' <span style="font-size:11px;opacity:.75">(ロック中)</span>' : '') + '</h3>' +
     '<p class="note">上から順に線を引く経路です。↑↓ボタンかドラッグで並べ替えると線の形が変わります(踏切は位置を保ちます)。行をクリックするとその駅を選択して表示を移動します</p>' +
     (l.stations.length ? `<ul class="linklist" id="stlist">${rows}</ul>` : '<p class="note">まだ駅がありません</p>');
 }
@@ -609,6 +786,7 @@ function setHub(st, on) {
   m.hubs = (m.hubs || []).filter(y => y.id !== st.id);   // 路線外の置き場所からは外す
 }
 function addStation(p) {
+  if (lineEditBlocked()) return;   // ロック中・非表示の路線には追加できない
   const l = curLine(), m = curMap();
   const r = project(l, p);
   ensureRoom(m, p.x, p.y); if (r) ensureRoom(m, r.x, r.y);
@@ -638,6 +816,7 @@ function addHubStation(p) {
 /* --- バス停(独立要素) --- */
 function addBusStop(p, kind) {
   const m = curMap();
+  m.show = m.show || {}; m.show.stop = true;   // 非表示でも置いたら表示に戻す
   ensureRoom(m, p.x, p.y);
   const q = { x: clamp(Math.round(p.x / G) * G, 0, mw(m)), y: clamp(Math.round(p.y / G) * G, 0, mh(m)) };
   m.stops = m.stops || [];
@@ -648,7 +827,12 @@ function addBusStop(p, kind) {
   afterAdd(); save(); renderAll();
 }
 /* --- 幹線道路(独立要素・頂点をクリックして引く) --- */
-function startRoadDrawing() { ui.drawing = { pts: [], hover: null }; renderAll(); }
+function startRoadDrawing() {
+  const m = curMap();
+  m.show = m.show || {}; m.show.road = true;   // 非表示でも引くときは表示に戻す
+  ui.drawing = { pts: [], hover: null };
+  save(); renderAll();
+}
 function finishRoad() {
   const d = ui.drawing; ui.drawing = null;
   if (d && d.pts.length >= 2) {
@@ -689,6 +873,10 @@ function addCrossing(p) {
   let best = null;
   curMap().lines.forEach(l => { const r = project(l, p); if (r && r.d < 18 && (!best || r.d < best.r.d)) best = { l, r }; });
   if (!best) return;
+  if (best.l.lock || best.l.hidden) {   // ロック中・非表示の路線には追加できない
+    alert('「' + best.l.name + '」は' + (best.l.lock ? 'ロック中' : '非表示') + 'です。\n右パネルの ' + (best.l.lock ? '🔒 を解除' : '👁 で表示に戻す') + 'してから追加してください。');
+    return;
+  }
   const q = snapCx(best.l, best.r), c = { id: uid(), seg: q.seg, t: q.t, name: '' };
   best.l.crossings.push(c);
   ui.line = best.l.id; ui.sel = { t: 'cx', id: c.id };
@@ -699,6 +887,7 @@ function delOne(sel) {
   const m = curMap(), id = sel.id;
   if (sel.t === 'st') {
     const s = findStation(id);
+    if (s && isStationLocked(s)) return;   // ロック中の路線の駅は削除しない
     if (s && s.hub) {   // 乗り換え駅は、すべての路線と路線外の置き場所から削除
       m.lines.forEach(x => { x.stations = x.stations.filter(st => st.id !== id); });
       m.hubs = (m.hubs || []).filter(st => st.id !== id);
@@ -711,8 +900,10 @@ function delOne(sel) {
   else if (sel.t === 'stop') m.stops = (m.stops || []).filter(s => s.id !== id);
   else if (sel.t === 'road') m.roads = (m.roads || []).filter(r => r.id !== id);
   else if (sel.t === 'bx') m.boxes = (m.boxes || []).filter(b => b.id !== id);
+  else if (sel.t === 'img') m.images = (m.images || []).filter(x => x.id !== id);
   else if (sel.t === 'cx') {
     const owner = m.lines.find(l => l.crossings.some(c => c.id === id));   // 所属する路線から削除
+    if (owner && owner.lock) return;   // ロック中の路線の踏切は削除しない
     if (owner) owner.crossings = owner.crossings.filter(c => c.id !== id);
   }
 }
@@ -738,7 +929,9 @@ function afterAdd() { if (document.getElementById('autosel').checked) ui.tool = 
 // 踏切の位置をグリッド上の点に合わせる
 function snapCx(l, r) {
   if (!document.getElementById('snap').checked) return r;
-  const a = l.stations[r.seg], b = l.stations[r.seg + 1], g = { x: Math.round(r.x / G) * G, y: Math.round(r.y / G) * G };
+  const a = segA(l, r.seg), b = segB(l, r.seg);
+  if (!a || !b) return r;
+  const g = { x: Math.round(r.x / G) * G, y: Math.round(r.y / G) * G };
   const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
   return { seg: r.seg, t: l2 ? clamp(((g.x - a.x) * dx + (g.y - a.y) * dy) / l2, 0, 1) : 0 };
 }
@@ -787,6 +980,8 @@ cv.addEventListener('mousedown', e => {
   if (e.button !== 0 || spaceDown) return;   // 中ボタン / Space押下中はパン処理へ
   const el = e.target.closest('[data-t]'), p = pt(e), m = curMap();
   clearBulk();   // クリックされた時点で矩形選択のまとまりは解除(下で□選択を始める場合はまた設定される)
+  // ロック中の路線の駅・踏切は、どのツールでも選択・操作しない(誤操作防止)
+  if (hitLocked(el)) { ui.sel = null; renderAll(); return; }
   if (ui.tool === 'station') {
     // 追加モード中に既存の駅(本体・駅名)をクリックしたら追加はしない。
     // その駅を選択した状態で「選択・移動」モードへ自動で切り替える(そのままドラッグすれば移動できる)
@@ -812,6 +1007,7 @@ cv.addEventListener('mousedown', e => {
   if (ui.tool === 'box') {
     const q = snapPt(p), b = { id: uid(), x: q.x, y: q.y, w: G * 6, h: G * 3, text: 'ラベル', fill: '#ffffff' };
     (m.boxes = m.boxes || []).push(b);
+    m.show = m.show || {}; m.show.box = true;   // 非表示でも置いたら表示に戻す
     ui.sel = { t: 'bx', id: b.id }; drag = { t: 'bxnew', id: b.id, a: q, p0: p };
     renderAll(); return;
   }
@@ -823,6 +1019,7 @@ cv.addEventListener('mousedown', e => {
     return;
   }
   if (el && el.dataset.t === 'bxr') { ui.sel = { t: 'bx', id: el.dataset.id }; drag = { t: 'bxr', id: el.dataset.id }; }
+  else if (el && el.dataset.t === 'imgr') { ui.sel = { t: 'img', id: el.dataset.id }; drag = { t: 'imgr', id: el.dataset.id }; }
   else if (el && (el.dataset.t === 'stname' || el.dataset.t === 'st')) {
     const s = findStation(el.dataset.id);
     if (s) {
@@ -860,6 +1057,10 @@ cv.addEventListener('mousedown', e => {
   else if (el && el.dataset.t === 'bx') {
     const b = m.boxes.find(b => b.id === el.dataset.id);
     ui.sel = { t: 'bx', id: b.id }; drag = { t: 'bx', id: b.id, ox: p.x - b.x, oy: p.y - b.y };
+  }
+  else if (el && el.dataset.t === 'img') {
+    const im = (m.images || []).find(x => x.id === el.dataset.id);
+    if (im) { ui.sel = { t: 'img', id: im.id }; drag = { t: 'img', id: im.id, ox: p.x - im.x, oy: p.y - im.y }; }
   }
   else if (el && el.dataset.t !== 'line') { if (el.dataset.l) ui.line = el.dataset.l; ui.sel = { t: el.dataset.t, id: el.dataset.id }; drag = { ...ui.sel }; }
   else if (el) { if (el.dataset.l) ui.line = el.dataset.l; ui.sel = null; }
@@ -916,6 +1117,16 @@ window.addEventListener('mousemove', e => {
     const q = snapPt(p);
     ensureRoom(m, q.x, q.y);
     r.pts[drag.i] = { x: clamp(q.x, 0, mw(m)), y: clamp(q.y, 0, mh(m)) };
+  } else if (drag.t === 'img') {
+    const im = (m.images || []).find(x => x.id === drag.id); if (!im) return;
+    const q = snapPt({ x: p.x - drag.ox, y: p.y - drag.oy });
+    ensureRoom(m, q.x + im.w, q.y + im.h);
+    im.x = clamp(q.x, 0, Math.max(0, mw(m) - im.w)); im.y = clamp(q.y, 0, Math.max(0, mh(m) - im.h));
+  } else if (drag.t === 'imgr') {
+    const im = (m.images || []).find(x => x.id === drag.id); if (!im) return;
+    const q = snapPt(p);
+    ensureRoom(m, q.x, q.y);
+    im.w = Math.max(G, q.x - im.x); im.h = Math.max(G, q.y - im.y);
   } else {
     const b = (m.boxes || []).find(b => b.id === drag.id); if (!b) return;
     if (drag.t === 'bx') { const q = snapPt({ x: p.x - drag.ox, y: p.y - drag.oy }); ensureRoom(m, q.x + b.w, q.y + b.h); b.x = clamp(q.x, 0, mw(m) - b.w); b.y = clamp(q.y, 0, mh(m) - b.h); }
@@ -1005,6 +1216,7 @@ document.getElementById('tools').addEventListener('click', e => {
   if (b.id === 'zout') setZoom(ui.zoom / 1.25);
   if (b.id === 'zreset') setZoom(1);
   if (b.id === 'imp') document.getElementById('file').click();
+  if (b.id === 'addimg') { imgReplaceId = null; document.getElementById('imgfile').click(); }
   if (b.id === 'exp') {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' }));
@@ -1025,6 +1237,61 @@ document.getElementById('file').addEventListener('change', e => {
     } catch (err) { alert('読み込めませんでした。書き出したJSONファイルを選んでください。'); }
   };
   r.readAsText(f); e.target.value = '';
+});
+/* ---------- 画像のインポート ---------- */
+let imgReplaceId = null;   // 「画像を変更」で差し替える対象(未指定なら新規追加)
+// 保存領域の上限に近づいたら注意(画像を取り込むと超えやすい)
+function checkQuota() {
+  if (snapStr().length > 4500000) alert('画像の取り込みで保存領域の上限に近づいています。\n保存に失敗する場合は、画像を小さくするか削除してください。');
+}
+// 画像ファイルを読み込んでキャンバスに配置。大きい画像は縮小してdata URLに畳む(localStorage対策)
+function importImageFile(file, replaceId) {
+  if (!file) return;
+  if (file.type && file.type.indexOf('image/') !== 0) { alert('画像ファイル(PNG・JPG・GIF・WebPなど)を選んでください。'); return; }
+  const rd = new FileReader();
+  rd.onerror = () => alert('画像を読み込めませんでした。');
+  rd.onload = () => {
+    const im = new Image();
+    im.onerror = () => alert('画像を読み込めませんでした。');
+    im.onload = () => {
+      const m = curMap(), MAX = 1600;
+      m.show = m.show || {}; m.show.img = true;   // 非表示でも取り込んだら表示に戻す
+      const nw = im.naturalWidth || 100, nh = im.naturalHeight || 100;
+      let src = rd.result;
+      const scale = Math.min(1, MAX / Math.max(nw, nh));
+      if (scale < 1 || file.size > 400 * 1024) {   // 多くの場合は縮小して再エンコード(WebP不可の環境ではPNG)
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(nw * scale));
+        c.height = Math.max(1, Math.round(nh * scale));
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        const u = c.toDataURL('image/webp', 0.85);
+        src = u.indexOf('data:image/webp') === 0 ? u : c.toDataURL('image/png');
+      }
+      if (replaceId) {   // 既存の画像を差し替える(位置・大きさはそのまま)
+        const t = (m.images || []).find(x => x.id === replaceId);
+        if (t) { t.src = src; ui.sel = { t: 'img', id: t.id }; save(); renderAll(); checkQuota(); return; }
+      }
+      // 最長辺900pxに収めた大きさで、いま表示している画面の中央に置く
+      const fit = Math.min(1, 900 / Math.max(nw, nh));
+      const w = Math.max(G, Math.round(nw * fit)), h = Math.max(G, Math.round(nh * fit));
+      const st = document.getElementById('stage');
+      const q = snapPt({ x: (st.scrollLeft + st.clientWidth / 2) / ui.zoom - w / 2,
+                         y: (st.scrollTop + st.clientHeight / 2) / ui.zoom - h / 2 });
+      const x = Math.max(0, Math.round(q.x)), y = Math.max(0, Math.round(q.y));
+      ensureRoom(m, x + w, y + h);
+      const a = mkImage(src, x, y, w, h);
+      (m.images = m.images || []).push(a);
+      ui.sel = { t: 'img', id: a.id };
+      afterAdd(); save(); renderAll(); checkQuota();
+    };
+    im.src = rd.result;
+  };
+  rd.readAsDataURL(file);
+}
+document.getElementById('imgfile').addEventListener('change', e => {
+  const f = e.target.files[0], rid = imgReplaceId;
+  e.target.value = ''; imgReplaceId = null;
+  if (f) importImageFile(f, rid);
 });
 function persistOpen() { if (!location.hash) try { localStorage.setItem('railopen', JSON.stringify(ui.open)); } catch (e) {} }
 // SVGキャンバスをPNG画像として保存
@@ -1108,6 +1375,24 @@ side.addEventListener('input', e => {
   else if (id === 'mbg') { m.bg = v; renderCanvas(); }
   else if (id === 'btext') { m.boxes.find(b => b.id === ui.sel.id).text = v; renderCanvas(); }
   else if (id === 'bfill') { m.boxes.find(b => b.id === ui.sel.id).fill = v; renderCanvas(); }
+  else if (id === 'iop') {
+    const im = (m.images || []).find(x => x.id === ui.sel.id);
+    if (im) { im.opacity = +v / 100; e.target.parentNode.firstChild.textContent = '不透明度(' + v + '%)'; renderCanvas(); }
+  }
+  else if (id === 'izone') {
+    const im = (m.images || []).find(x => x.id === ui.sel.id);
+    if (im) { im.z = v; save(); renderAll(); }
+  }
+  else if (e.target.classList && e.target.classList.contains('showel')) {
+    // 種類ごとの表示/非表示(レイヤー)
+    m.show = m.show || {};
+    m.show[e.target.dataset.k] = e.target.checked;
+    const hadSel = !!ui.sel, hadBulk = getBulk().length > 0;
+    clearBulk();
+    if (ui.sel && !selVisible(ui.sel)) ui.sel = null;
+    save(); renderCanvas();
+    if (hadSel || hadBulk) renderSide();   // 選択が対象外になったらパネルも更新
+  }
   else if (id === 'sshape') {
     const s = findStation(ui.sel.id);
     if (s) { s.shape = v; renderCanvas(); }
@@ -1154,6 +1439,13 @@ side.addEventListener('input', e => {
   }
   else if (id === 'lwidth') { l.width = +v; e.target.parentNode.firstChild.textContent = '線の太さ(' + v + ')'; renderCanvas(); }
   else if (id === 'lcolor') { l.color = v; renderCanvas(); }
+  else if (id === 'lloop') {
+    // 閉じる/開くで区間の数が変わるため、切り替え前の踏切の位置を基準に付け直す
+    const ps = l.crossings.map(c => segPt(l, c.seg, c.t));
+    l.loop = e.target.checked;
+    keepCrossings(l, () => { }, ps);
+    save(); renderAll();
+  }
   else if (id === 'sname') {
     const s = findStation(ui.sel.id);
     if (s) {
@@ -1188,23 +1480,50 @@ side.addEventListener('change', e => {
 });
 side.addEventListener('click', e => {
   const btn = e.target.closest('button'); if (btn) btn.blur();
+  // --- グループの見出しクリックで開閉(開閉状態は覚えておく) ---
+  const sh = e.target.closest('[data-sech]');
+  if (sh) {
+    const sid = sh.dataset.sech;
+    acc[sid] = !accOpen(sid);
+    saveAcc(); renderSide();
+    return;
+  }
   const m = curMap(), li = e.target.closest('#lines li'), rli = e.target.closest('#roadlist li[data-rid]'), id = e.target.id;
-  if (li) { ui.line = li.dataset.id; ui.sel = null; renderAll(); }
+  // --- レイヤー操作(表示/非表示・編集ロック・重ね順)。行クリックより先に処理する ---
+  const ly = e.target.closest('button.lyr');
+  if (ly) {
+    const row = ly.closest('#lines li[data-id]'), t = row && m.lines.find(x => x.id === row.dataset.id);
+    if (t) {
+      const act = ly.dataset.act;
+      if (act === 'eye') t.hidden = !t.hidden;
+      else if (act === 'lock') t.lock = !t.lock;
+      else {
+        // 表示は上=手前なので、上へは配列の後ろ(奥ではなく手前側)へ移動する
+        const i = m.lines.indexOf(t), up = act === 'up';
+        if ((up && i < m.lines.length - 1) || (!up && i > 0)) {
+          m.lines.splice(i, 1);
+          m.lines.splice(up ? i + 1 : i - 1, 0, t);
+        }
+      }
+      clearBulk();   // 表示設定が変わるので□選択は解除
+      if (ui.sel && !selVisible(ui.sel)) ui.sel = null;
+      save(); renderAll();
+    }
+    return;
+  }
+  if (li) { ui.line = li.dataset.id; ui.sel = null; clearBulk(); renderAll(); }
   else if (rli) { ui.sel = { t: 'road', id: rli.dataset.rid }; ui.tool = 'select'; renderAll(); }
+  else if (id === 'addimgp') { imgReplaceId = null; document.getElementById('imgfile').click(); }
+  else if (e.target.closest && e.target.closest('#imglist li[data-iid]')) {
+    // 画像は下敷きだとクリックで選択できないことがあるので、一覧からも選べるようにする
+    ui.sel = { t: 'img', id: e.target.closest('li').dataset.iid }; ui.tool = 'select'; renderAll();
+  }
   else if (id === 'sreset') { const s = findStation(ui.sel.id); if (s) delete s.color; save(); renderAll(); }
   else if (id === 'bsreset') { const s = (m.stops || []).find(s => s.id === ui.sel.id); delete s.color; save(); renderAll(); }
   else if (id === 'droad') { m.roads = (m.roads || []).filter(r => r.id !== ui.sel.id); ui.sel = null; save(); renderAll(); }
-  // --- 乗り換え駅の「接続する駅」リスト(路線ごと) ---
-  else if (e.target.classList && e.target.classList.contains('linkadd')) {
-    const s = findStation(ui.sel && ui.sel.id), box = e.target.closest('[data-lid]');
-    const selEl = box && box.querySelector('.linksel');
-    if (s && selEl && selEl.value) {
-      const lid = box.dataset.lid;
-      if (!s.links || typeof s.links !== 'object') s.links = {};
-      s.links[lid] = linksIn(s, lid).concat(selEl.value);
-      save(); renderAll();
-    }
-  }
+  else if (id === 'idel') { del(); }
+  else if (id === 'ichg') { imgReplaceId = ui.sel && ui.sel.id; document.getElementById('imgfile').click(); }
+  // --- 「接続する駅」リスト(路線ごと) ---
   else if (e.target.classList && (e.target.classList.contains('lup') || e.target.classList.contains('ldown') || e.target.classList.contains('ldel'))) {
     const list = e.target.closest('.linklist'), row = list && e.target.closest('li');
     const s = findStation(ui.sel && ui.sel.id);
@@ -1217,6 +1536,17 @@ side.addEventListener('click', e => {
     else return;
     if (!s.links || typeof s.links !== 'object') s.links = {};
     s.links[lid] = links; save(); renderAll();
+  }
+  // 行のボタン以外をクリック → その駅を選択してパネルを切り替え(左パネルの駅リストと同じ)
+  else if (e.target.closest && e.target.closest('.linklist li')) {
+    const row = e.target.closest('.linklist li'), s = row && findStation(row.dataset.id);
+    if (s) {
+      const ls = linesOf(s.id);
+      if (ls.length && !ls.some(x => x.id === ui.line)) ui.line = ls[0].id;
+      ui.sel = { t: 'st', id: s.id };
+      clearBulk();
+      renderAll();
+    }
   }
   else if (id === 'newwin') window.open('index.html#' + encodeURIComponent(m.id));
   else if (id === 'addline') {
@@ -1293,6 +1623,18 @@ side.addEventListener('drop', e => {
 side.addEventListener('dragend', () => {
   linkDrag = null;
   document.querySelectorAll('.linklist .dragging, .linklist .dropto').forEach(x => x.classList.remove('dragging', 'dropto'));
+});
+
+// 接続先セレクトで駅を選ぶ → その場でリストへ追加(「追加」ボタンは不要)
+side.addEventListener('change', e => {
+  if (!e.target.classList || !e.target.classList.contains('linksel')) return;
+  const s = findStation(ui.sel && ui.sel.id), box = e.target.closest('[data-lid]'), v = e.target.value;
+  if (!s || !box || !v) return;   // 「追加する駅を選択…」のときは何もしない
+  if (!s.links || typeof s.links !== 'object') s.links = {};
+  const lid = box.dataset.lid;
+  if (linksIn(s, lid).includes(v)) return;   // 同じ接続を重ねない
+  s.links[lid] = linksIn(s, lid).concat(v);
+  save(); renderAll();
 });
 
 /* ---------- 左パネル: 駅の並べ替え(↑↓ボタン / ドラッグ) ---------- */
