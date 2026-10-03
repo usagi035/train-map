@@ -19,7 +19,7 @@ const HINTS = {
   crossing: '線の近くをクリックして踏切を置く',
   busstop:  'クリックでバス停を配置(幹線道路とは独立して置けます)',
   terminal: 'クリックでバスターミナルを配置',
-  road:     'クリックで頂点を追加して幹線道路を引く / Enter・Esc・ダブルクリックで確定',
+  road:     'クリックで頂点を追加 / Enterで確定 / Escで中止 / 最初の頂点で閉じる',
   box:      'ドラッグで四角形(ラベル枠)を追加。クリックだけなら標準サイズ'
 };
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -119,9 +119,12 @@ function applySnap(e) {
   renderAll();
 }
 function undo() {
-  if (ui.drawing) {   // 道路の描画中は最後に置いた頂点を戻す
-    if (ui.drawing.pts.length) { ui.drawing.pts.pop(); ui.drawing.hover = null; renderCanvas(); }
-    else cancelRoad();
+  if (ui.drawing) {   // 道路の描画中は最後に置いた頂点を戻す(0個になったら中止)
+    if (ui.drawing.pts.length) {
+      ui.drawing.pts.pop(); ui.drawing.hover = null;
+      if (!ui.drawing.pts.length) cancelRoad();
+      else { updateRoadHint(); renderCanvas(); }
+    } else cancelRoad();
     return;
   }
   if (!undoStack.length) return;
@@ -450,7 +453,14 @@ function addRoadPoint(p) {
   // 最初の頂点付近をクリックしたら閉じて確定
   if (d.pts.length >= 2 && dist(d.pts[0], q) < 14) { finishRoad(); return; }
   d.pts.push(q);
+  updateRoadHint();
   renderCanvas();
+}
+// 描画中にいることを下のヒントに表示する
+function updateRoadHint() {
+  const n = ui.drawing ? ui.drawing.pts.length : 0;
+  document.getElementById('hint').textContent =
+    n ? `頂点を${n}個配置 — Enterで確定 / Ctrl+Zで1つ戻す / Escで中止` : HINTS.road;
 }
 function addCrossing(p) {
   let best = null;
@@ -670,7 +680,7 @@ window.addEventListener('keydown', e => {
   }
   if (/INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
   if (e.key === 'Delete' || e.key === 'Backspace') del();
-  if (e.key === 'Enter' && ui.drawing) { finishRoad(); return; }
+  if (e.key === 'Enter' && ui.drawing) { e.preventDefault(); finishRoad(); return; }   // 確定(ボタンの再発火も止める)
   if (e.key === 'Escape') {
     if (ui.drawing) cancelRoad();
     else { ui.tool = 'select'; renderTools(); }
@@ -687,6 +697,7 @@ window.addEventListener('keyup', e => {
 /* ---------- toolbar / tabs ---------- */
 document.getElementById('tools').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
+  b.blur();   // ボタンにフォーカスが残るとEnter/Spaceで誤爆するため
   if (b.dataset.tool) {
     if (ui.drawing && b.dataset.tool !== 'road') finishRoad();
     ui.tool = b.dataset.tool;
@@ -863,6 +874,7 @@ side.addEventListener('change', e => {
   renderSide();
 });
 side.addEventListener('click', e => {
+  const btn = e.target.closest('button'); if (btn) btn.blur();
   const m = curMap(), li = e.target.closest('#lines li'), rli = e.target.closest('#roadlist li[data-rid]'), id = e.target.id;
   if (li) { ui.line = li.dataset.id; ui.sel = null; renderAll(); }
   else if (rli) { ui.sel = { t: 'road', id: rli.dataset.rid }; ui.tool = 'select'; renderAll(); }
