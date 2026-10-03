@@ -112,8 +112,25 @@ npm run dist
 | --- | --- |
 | `RailwayMapEditor Setup x.x.x.exe` | インストーラー版 |
 | `RailwayMapEditor x.x.x.exe` | ポータブル版(インストール不要) |
+| `Uninstall RailwayMapEditor.exe` | アンインストーラー(setupと同じ `dist` フォルダに出ます) |
 
 どちらか一方だけ作りたい場合は、`package.json` の `"target": ["nsis", "portable"]` を編集してください(`nsis` がインストーラー版、`portable` がポータブル版です)。
+
+### アンインストーラーについて
+
+`npm run dist` はインストーラーを作ったあと、`dist/Uninstall RailwayMapEditor.exe` も自動で生成します。アンインストーラーだけ作り直したいときは次を実行します。
+
+```bash
+npm run uninstaller
+```
+
+- NSIS のアンインストーラーはビルドだけでは作れず、「インストーラーを一度動かす」ことで書き出されます。このリポジトリの `build/uninstaller.nsi` はそのための小さな生成用インストーラーで、`scripts/make-uninstaller.js` がその一連(コンパイル → 書き出し → `dist` へコピー → 一時ファイル削除)を自動化しています。`makensis` は electron-builder が入れたものを使います
+- インストール先は、実行時にレジストリと既定のフォルダを調べて特定するため、別のPCでも動きます
+- 実行すると確認ダイアログが出て、「起動中のアプリの終了 → ショートカット削除 → 本体フォルダの削除 → レジストリ(設定→アプリの一覧)の削除」の順に処理します
+- 作成した路線図データ(`%APPDATA%\railway-map-editor`)は、**別途確認ダイアログで「はい」を選んだ場合のみ**削除します。「いいえ」なら残るので、あとで入れ直してもそのまま使えます
+- `/S` を付けてサイレント実行もできます(この場合はデータは常に残ります)
+- Windowsの「設定 → アプリ」からもアンインストールできます(インストーラーが元から登録しているアンインストーラーが使われます)
+- アンインストーラー自体の削除処理は、誤って消して困る備えとして「ドライラン」(`RME_DRYRUN` 環境変数に書き出し先ファイルを指定)で検証できます。指定するとインストール先を特定して書き出すだけで終了します
 
 ### 配布するときの注意
 
@@ -140,7 +157,11 @@ PCの入れ替えやアプリの削除に備えて、大切な路線図は「書
 ├── package.json   # 依存関係・ビルド設定
 ├── main.js        # Electronのメインプロセス(ウィンドウ管理・Ctrl+Wの処理)
 ├── index.html     # 画面の構造とスタイル(HTML / CSS)
-└── renderer.js    # 編集ロジック(画面側のJavaScript)
+├── renderer.js    # 編集ロジック(画面側のJavaScript)
+├── build/
+│   └── uninstaller.nsi       # アンインストーラーのNSISスクリプト
+└── scripts/
+    └── make-uninstaller.js   # dist にアンインストーラーを同梱する処理
 ```
 
 ## ライセンス

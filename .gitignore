@@ -1,4 +1,11 @@
+# 依存関係・手元用スクリプト
 /node_modules
 package-lock.json
 up.bat
+
+# ビルド成果物(インストーラー版 / ポータブル版 / アンインストーラー)
+#   dist/            … npm run dist の出力先
+#   build/*.exe      … アンインストーラー生成時に一時的に出るコンパイル済みファイル
+#                      (通常は %TEMP% に出るため、念のための保険)
 /dist
+/build/*.exe
