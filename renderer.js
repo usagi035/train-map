@@ -73,7 +73,66 @@ else {
 
 const curMap  = () => S.maps.find(m => m.id === ui.map) || S.maps[0];
 const curLine = () => { const m = curMap(); return m.lines.find(l => l.id === ui.line) || m.lines[0]; };
-const save = () => { try { localStorage.setItem('railmaps', JSON.stringify(S)); } catch (e) {} };
+
+/* ---------- 履歴 (元に戻す / やり直す) ---------- */
+const snapStr = () => { try { return JSON.stringify(S); } catch (e) { return ''; } };
+const viewNow = () => ({ map: ui.map, line: ui.line });
+const undoStack = [], redoStack = [];
+let lastSnap = snapStr(), lastView = viewNow(), saveTimer = 0;
+// 表示中の路線図・路線を記録(元に戻したときにどの路線図を開くかに使う)
+const syncView = () => { lastView = viewNow(); };
+function updateUndoButtons() {
+  const u = document.getElementById('undo'), r = document.getElementById('redo');
+  if (u) u.disabled = !undoStack.length;
+  if (r) r.disabled = !redoStack.length;
+}
+// 保存しつつ、変更前の状態を履歴に積む
+const save = () => {
+  clearTimeout(saveTimer); saveTimer = 0;
+  const now = snapStr();
+  if (now === lastSnap) return;         // 変化なしなら履歴に残さない
+  undoStack.push({ s: lastSnap, v: lastView });
+  if (undoStack.length > 50) undoStack.shift();
+  redoStack.length = 0;
+  lastSnap = now; lastView = viewNow();
+  try { localStorage.setItem('railmaps', now); } catch (e) {}
+  updateUndoButtons();
+};
+// 文字入力やスライダーは、連続入力をまとめて1回の履歴にする
+const deferSave = () => {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { saveTimer = 0; save(); }, 600);
+};
+function applySnap(e) {
+  try { S = JSON.parse(e.s); } catch (err) { return; }
+  lastSnap = e.s; lastView = e.v;
+  try { localStorage.setItem('railmaps', e.s); } catch (err) {}
+  const v = e.v || {};
+  ui.open = ui.open.filter(id => S.maps.some(m => m.id === id));
+  const mid = S.maps.some(m => m.id === v.map) ? v.map : S.maps[0].id;
+  if (!ui.open.includes(mid)) ui.open.push(mid);
+  ui.map = mid; ui.home = false;
+  const m = curMap();
+  ui.line = (v.line && m.lines.some(l => l.id === v.line)) ? v.line : m.lines[0].id;
+  ui.sel = null; ui.drawing = null;
+  persistOpen();
+  renderAll();
+}
+function undo() {
+  if (ui.drawing) {   // 道路の描画中は最後に置いた頂点を戻す
+    if (ui.drawing.pts.length) { ui.drawing.pts.pop(); ui.drawing.hover = null; renderCanvas(); }
+    else cancelRoad();
+    return;
+  }
+  if (!undoStack.length) return;
+  redoStack.push({ s: lastSnap, v: lastView });
+  applySnap(undoStack.pop());
+}
+function redo() {
+  if (ui.drawing || !redoStack.length) return;
+  undoStack.push({ s: lastSnap, v: lastView });
+  applySnap(redoStack.pop());
+}
 
 /* ---------- geometry ---------- */
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -118,6 +177,7 @@ function renderTools() {
   document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === ui.tool));
   document.getElementById('hint').textContent = HINTS[ui.tool] || '';
   document.getElementById('cv').style.cursor = ui.tool === 'select' ? 'default' : 'crosshair';
+  updateUndoButtons();
 }
 function renderCanvas() {
   const m = curMap(), bg = m.bg || BG, dark = isDark(bg);
@@ -599,6 +659,15 @@ window.addEventListener('mousemove', e => {
 cv.addEventListener('dblclick', () => { if (ui.drawing) finishRoad(); });
 window.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') { e.preventDefault(); if (!window.__closeTab()) window.close(); return; }
+  const k = e.key.toLowerCase();
+  const ae = document.activeElement;
+  const inText = ae && /INPUT|TEXTAREA/.test(ae.tagName) && !/^(checkbox|radio|range|color|button|submit|file|hidden)$/i.test(ae.type);
+  if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y') && !e.altKey) {
+    if (inText) return;                       // テキスト欄ではブラウザ標準の取り消しを使う
+    e.preventDefault();
+    if (k === 'y' || e.shiftKey) redo(); else undo();
+    return;
+  }
   if (/INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
   if (e.key === 'Delete' || e.key === 'Backspace') del();
   if (e.key === 'Enter' && ui.drawing) { finishRoad(); return; }
@@ -625,6 +694,8 @@ document.getElementById('tools').addEventListener('click', e => {
     renderTools(); renderCanvas();
   }
   if (b.id === 'del') del();
+  if (b.id === 'undo') undo();
+  if (b.id === 'redo') redo();
   if (b.id === 'zin') setZoom(ui.zoom * 1.25);
   if (b.id === 'zout') setZoom(ui.zoom / 1.25);
   if (b.id === 'zreset') setZoom(1);
@@ -680,7 +751,7 @@ function exportImage() {
 function openMap(id) {
   if (!ui.open.includes(id)) ui.open.push(id);
   ui.map = id; ui.line = curMap().lines[0].id; ui.sel = null; ui.home = false;
-  persistOpen(); renderAll();
+  syncView(); persistOpen(); renderAll();
 }
 function closeTab(id) {
   const i = ui.open.indexOf(id); if (i < 0) return;
@@ -689,17 +760,18 @@ function closeTab(id) {
     const n = ui.open[Math.min(i, ui.open.length - 1)];
     if (n) { ui.map = n; ui.line = curMap().lines[0].id; ui.sel = null; } else ui.home = true;
   }
-  persistOpen(); renderAll();
+  syncView(); persistOpen(); renderAll();
 }
 function newMap() { const m = mkMap('路線図 ' + (S.maps.length + 1)); S.maps.push(m); save(); openMap(m.id); }
 function deleteMap(id) {
   S.maps = S.maps.filter(x => x.id !== id);
   if (!S.maps.length) S.maps.push(mkMap('路線図 1'));
+  save();                       // 表示を切り替える前に履歴へ(削除前の路線図に戻せるように)
   ui.open = ui.open.filter(x => x !== id);
   if (ui.map === id) {
     if (ui.open.length) { ui.map = ui.open[0]; ui.line = curMap().lines[0].id; ui.sel = null; } else ui.home = true;
   }
-  save(); persistOpen(); renderAll();
+  syncView(); persistOpen(); renderAll();
 }
 // Ctrl+W から呼ばれる。true=路線図を閉じた(アプリは閉じない) / false=開いている路線図がないのでウィンドウを閉じてよい
 window.__closeTab = () => {
@@ -770,7 +842,9 @@ side.addEventListener('input', e => {
     renderCanvas();
   }
   else if (id === 'cname') { l.crossings.find(c => c.id === ui.sel.id).name = v; renderCanvas(); }
-  save();
+  // 文字入力とスライダーの連続操作は、まとめて1回の履歴にする
+  if (['mname', 'lname', 'sname', 'bsname', 'rname', 'cname', 'btext'].includes(id) || e.target.type === 'range') deferSave();
+  else save();
 });
 side.addEventListener('change', e => {
   if (e.target.id === 'gap') {
@@ -819,6 +893,9 @@ window.addEventListener('storage', e => {
     const d = JSON.parse(e.newValue);
     if (!Array.isArray(d.maps) || !d.maps.length) return;
     S = d;
+    // 別ウィンドウの変更を取り込んだ時点で履歴をリセット
+    lastSnap = snapStr(); lastView = viewNow();
+    undoStack.length = 0; redoStack.length = 0; updateUndoButtons();
     ui.open = ui.open.filter(id => S.maps.some(m => m.id === id));
     if (!S.maps.some(m => m.id === ui.map)) {
       if (ui.open.length) { ui.map = ui.open[0]; ui.line = curMap().lines[0].id; } else ui.home = true;
