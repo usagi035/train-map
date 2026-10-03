@@ -40,6 +40,8 @@
   #stage { flex:1; overflow:auto; background:var(--paper); }
   #cv { display:block; user-select:none; }
   aside { width:270px; border-left:1px solid var(--rule); background:#fff; padding:12px; overflow:auto; }
+  #left { border-left:0; border-right:1px solid var(--rule); }
+  #left h3 i { display:inline-block; width:18px; height:6px; border-radius:3px; margin-right:6px; vertical-align:middle; }
   aside h3 { margin:16px 0 6px; font-size:13px; }
   aside h3:first-child { margin-top:0; }
   aside label { display:block; margin-bottom:8px; font-size:12px; color:#52636c; }
@@ -54,7 +56,24 @@
   #lines li.on, #roadlist li.on { background:#e3efe9; font-weight:700; }
   #lines i, #roadlist i { width:22px; height:6px; border-radius:3px; flex:none; }
   #roadlist i { height:9px; }
-  #hint { position:fixed; left:12px; bottom:10px; background:var(--ink); color:#fff; padding:6px 12px; border-radius:5px; font-size:12px; pointer-events:none; }
+  /* 乗り換え駅の「接続する駅」リスト(路線ごと) */
+  .linkgroup { margin-bottom:10px; padding:8px; border:1px solid #e3ebe8; border-radius:6px; background:#fbfcfc; }
+  .linkgroup .lghead { display:flex; align-items:center; gap:6px; font-weight:700; color:#2b3a41; margin-bottom:6px; }
+  .linkgroup .lghead i { width:16px; height:5px; border-radius:3px; flex:none; }
+  .linklist { list-style:none; margin:0 0 8px; padding:0; }
+  .linklist li { display:flex; align-items:center; gap:6px; padding:5px 6px; border:1px solid #dbe4e1; border-radius:5px; background:#fff; margin-bottom:4px; cursor:grab; }
+  .linklist li.dragging { opacity:.4; }
+  .linklist li.dropto { border-color:#2f7d64; box-shadow:0 0 0 1px #2f7d64 inset; }
+  .linklist .lhandle { color:#8fa3a9; font-weight:700; cursor:grab; flex:none; user-select:none; }
+  .linklist i { width:16px; height:5px; border-radius:3px; flex:none; }
+  .linklist .lname { flex:1; min-width:0; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .linklist .lbtns { display:flex; gap:3px; flex:none; }
+  .linklist button { padding:2px 6px; font-size:12px; line-height:1.5; }
+  .linklist button:disabled { opacity:.4; cursor:default; }
+  .linklist li.on { border-color:#2f7d64; background:#eaf5f1; }
+  .linklist .badge { flex:none; font-size:10px; font-weight:700; color:#2f7d64; background:#e3efe9; border-radius:3px; padding:1px 5px; }
+  .linklist svg { flex:none; }
+  #hint { position:fixed; left:282px; bottom:10px; background:var(--ink); color:#fff; padding:6px 12px; border-radius:5px; font-size:12px; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -83,6 +102,7 @@
   </div>
 </header>
 <main>
+  <aside id="left"></aside>
   <div id="stage"><svg id="cv" width="2400" height="1600" viewBox="0 0 2400 1600"></svg></div>
   <aside id="side"></aside>
   <div id="home"></div>
