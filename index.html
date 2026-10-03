@@ -32,6 +32,8 @@
   button { font:inherit; }
   #tools button, aside button { background:#fff; color:var(--ink); border:1px solid #b9c4c1; border-radius:5px; padding:5px 11px; cursor:pointer; }
   #tools button.on { background:var(--signal); border-color:var(--signal); color:#fff; }
+  #tools button:disabled { opacity:.45; cursor:not-allowed; }
+  #tools button:disabled:hover { background:#fff; }
   #tools button:hover:not(.on), aside button:hover { background:#eaf0ee; }
   button:focus-visible, input:focus-visible { outline:2px solid var(--signal); outline-offset:1px; }
   main { flex:1; display:flex; min-height:0; }
@@ -47,10 +49,11 @@
   aside input[type=range] { padding:0; }
   aside select { display:block; width:100%; padding:5px 7px; margin-top:3px; border:1px solid #b9c4c1; border-radius:4px; font:inherit; background:#fff; color:var(--ink); }
   aside .note { font-size:12px; color:#52636c; margin:0 0 8px; }
-  #lines { list-style:none; margin:0 0 8px; padding:0; }
-  #lines li { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:5px; cursor:pointer; }
-  #lines li.on { background:#e3efe9; font-weight:700; }
-  #lines i { width:22px; height:6px; border-radius:3px; flex:none; }
+  #lines, #roadlist { list-style:none; margin:0 0 8px; padding:0; }
+  #lines li, #roadlist li { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:5px; cursor:pointer; }
+  #lines li.on, #roadlist li.on { background:#e3efe9; font-weight:700; }
+  #lines i, #roadlist i { width:22px; height:6px; border-radius:3px; flex:none; }
+  #roadlist i { height:9px; }
   #hint { position:fixed; left:12px; bottom:10px; background:var(--ink); color:#fff; padding:6px 12px; border-radius:5px; font-size:12px; pointer-events:none; }
 </style>
 </head>
@@ -62,6 +65,9 @@
     <button data-tool="station">駅を追加</button>
     <button data-tool="hub">乗り換え駅を追加</button>
     <button data-tool="crossing">踏切を追加</button>
+    <button data-tool="busstop" title="幹線道路とは独立したバス停">バス停を追加</button>
+    <button data-tool="terminal" title="幹線道路とは独立したバスターミナル">バスターミナルを追加</button>
+    <button data-tool="road" title="クリックで頂点を追加して道路を引く">幹線道路を引く</button>
     <button data-tool="box">ラベル枠を追加</button>
     <label><input type="checkbox" id="snap" checked> グリッドに合わせる</label>
     <label><input type="checkbox" id="autosel" checked> 追加後に選択へ戻る</label>

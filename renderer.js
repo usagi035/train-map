@@ -9,20 +9,29 @@ function ensureRoom(m, x, y) {
   if (nx !== mw(m)) m.w = nx;
   if (ny !== mh(m)) m.h = ny;
 }
-const HINTS = {
-  select:  '駅や踏切をドラッグして移動 / Deleteキーで削除 / Space+ドラッグで画面移動',
-  station: 'クリックで駅を追加(線の上なら間に挿入)',
-  hub:     'クリックで乗り換え駅を追加(複数路線に属します)',
-  crossing:'線の近くをクリックして踏切を置く',
-  box:'ドラッグで四角形(ラベル枠)を追加。クリックだけなら標準サイズ'
-};
 const SHAPES = { circle: '○ 丸', double: '◎ 二重丸(特急停車駅など)', square: '□ 四角', diamond: '◇ ひし形' };
+const STOP_KINDS = { stop: 'バス停', terminal: '■ バスターミナル' };
+const STOP_COLOR = '#1f2d36';   // バス停の既定色(道路とは無関係)
+const HINTS = {
+  select:   '駅・バス停・道路をドラッグして移動 / Deleteキーで削除 / Space+ドラッグで画面移動',
+  station:  'クリックで駅を追加(線の上なら間に挿入)',
+  hub:      'クリックで乗り換え駅を追加(複数路線に属します)',
+  crossing: '線の近くをクリックして踏切を置く',
+  busstop:  'クリックでバス停を配置(幹線道路とは独立して置けます)',
+  terminal: 'クリックでバスターミナルを配置',
+  road:     'クリックで頂点を追加して幹線道路を引く / Enter・Esc・ダブルクリックで確定',
+  box:      'ドラッグで四角形(ラベル枠)を追加。クリックだけなら標準サイズ'
+};
 const uid = () => Math.random().toString(36).slice(2, 9);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const BG = '#f4f6f5';
 const mkLine = (name, color) => ({ id: uid(), name, color, width: 8, stations: [], crossings: [] });
-const mkMap = name => ({ id: uid(), name, bg: BG, lines: [mkLine('1号線', COLORS[0])] });
+// 幹線道路(背景)。頂点(pts)の並びで形を表す独立要素
+const mkRoad = (name, color, pts) => ({ id: uid(), name, color, width: 16, pts: pts || [] });
+// バス停(独立要素)。路線・道路に属さない
+const mkBusStop = (name, x, y, kind) => ({ id: uid(), name, x, y, kind: kind || 'stop' });
+const mkMap = name => ({ id: uid(), name, bg: BG, lines: [mkLine('1号線', COLORS[0])], roads: [], stops: [] });
 const mkStation = (name, x, y) => ({ id: uid(), name, x, y, hub: false });
 const lw = l => l.width || 8;
 const isDark = hex => { const n = parseInt(hex.slice(1), 16); return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) < 120; };
@@ -30,7 +39,30 @@ const isDark = hex => { const n = parseInt(hex.slice(1), 16); return 0.299 * (n 
 let S = null;
 try { S = JSON.parse(localStorage.getItem('railmaps')); } catch (e) {}
 if (!S || !Array.isArray(S.maps) || !S.maps.length) S = { maps: [mkMap('路線図 1')] };
-let ui = { map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: 1 };
+// 旧形式の移行: 道路を「路線のtype:road + 駅」で持っていたデータを、独立した道路・バス停へ変換する
+function migrate(data) {
+  data.maps.forEach(m => {
+    if (!Array.isArray(m.roads)) m.roads = [];
+    if (!Array.isArray(m.stops)) m.stops = [];
+    if (!Array.isArray(m.lines) || !m.lines.length) { m.lines = [mkLine('1号線', COLORS[0])]; return; }
+    const oldRoads = m.lines.filter(l => l.type === 'road');
+    if (!oldRoads.length) return;
+    oldRoads.forEach(l => {
+      if (l.stations.length >= 2)
+        m.roads.push(mkRoad(l.name, l.color, l.stations.map(s => ({ x: s.x, y: s.y }))));
+      l.stations.forEach(s => {
+        const st = mkBusStop(s.name, s.x, s.y, s.shape === 'terminal' ? 'terminal' : 'stop');
+        st.color = s.color; st.nameX = s.nameX; st.nameY = s.nameY; st.nameRot = s.nameRot;
+        m.stops.push(st);
+      });
+    });
+    m.lines = m.lines.filter(l => l.type !== 'road');
+    if (!m.lines.length) m.lines.push(mkLine('1号線', COLORS[0]));
+  });
+  return data;
+}
+S = migrate(S);
+let ui = { map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: 1, drawing: null };
 const hm = S.maps.find(m => m.id === decodeURIComponent(location.hash.slice(1)));   // 別ウィンドウで開いたときの路線図
 if (hm) { ui.map = hm.id; ui.line = hm.lines[0].id; ui.open = [hm.id]; }
 else {
@@ -84,7 +116,7 @@ function renderHome() {
 }
 function renderTools() {
   document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === ui.tool));
-  document.getElementById('hint').textContent = HINTS[ui.tool];
+  document.getElementById('hint').textContent = HINTS[ui.tool] || '';
   document.getElementById('cv').style.cursor = ui.tool === 'select' ? 'default' : 'crosshair';
 }
 function renderCanvas() {
@@ -104,6 +136,28 @@ function renderCanvas() {
          (b.text ? `<text x="${b.x + b.w / 2}" y="${b.y + b.h / 2 + fs * 0.35}" text-anchor="middle" font-size="${fs}" font-weight="700" fill="${tc}">${esc(b.text)}</text>` : '') +
          (sel ? `<rect x="${b.x - 3}" y="${b.y - 3}" width="${b.w + 6}" height="${b.h + 6}" rx="4" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/><rect data-t="bxr" data-id="${b.id}" x="${b.x + b.w - 6}" y="${b.y + b.h - 6}" width="12" height="12" fill="${fg}" style="cursor:nwse-resize"/>` : '') + '</g>';
   });
+  // 0) 幹線道路(背景・独立要素)
+  (m.roads || []).forEach(r => {
+    if (r.pts.length < 2) return;
+    const sel = ui.sel && ui.sel.t === 'road' && ui.sel.id === r.id;
+    const pts = r.pts.map(p => p.x + ',' + p.y).join(' ');
+    h += `<g data-t="road" data-id="${r.id}">` +
+         `<polyline points="${pts}" fill="none" stroke="${r.color}" stroke-width="${r.width}" stroke-linecap="round" stroke-linejoin="round"/>` +
+         `<polyline points="${pts}" fill="none" stroke="#ffffff" stroke-opacity=".85" stroke-width="${Math.max(2, r.width - 7)}" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>`;
+    if (sel) {
+      h += `<polyline points="${pts}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3" pointer-events="none"/>` +
+           r.pts.map((p, i) => `<rect data-t="roadpt" data-id="${r.id}" data-i="${i}" x="${p.x - 5}" y="${p.y - 5}" width="10" height="10" fill="#fff" stroke="${fg}" stroke-width="2" style="cursor:move"/>`).join('');
+    }
+    h += '</g>';
+  });
+  // 描画中プレビュー(幹線道路ツール)
+  if (ui.drawing) {
+    const d = ui.drawing, all = d.hover && d.pts.length ? d.pts.concat([d.hover]) : d.pts;
+    if (all.length) {
+      h += `<polyline points="${all.map(p => p.x + ',' + p.y).join(' ')}" fill="none" stroke="#5a6b73" stroke-width="14" stroke-opacity=".6" stroke-linecap="round" stroke-linejoin="round" ${d.pts.length > 1 ? 'stroke-dasharray="12 7"' : ''} pointer-events="none"/>`;
+      h += d.pts.map(p => `<circle cx="${p.x}" cy="${p.y}" r="5" fill="#fff" stroke="#5a6b73" stroke-width="3" pointer-events="none"/>`).join('');
+    }
+  }
   const xf = (l, c) => {
     const p = segPt(l, c.seg, c.t), a = l.stations[c.seg], b = l.stations[c.seg + 1];
     return { p, t: `translate(${p.x} ${p.y}) rotate(${Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI})` };
@@ -152,13 +206,31 @@ function renderCanvas() {
       else { body = `<circle cx="${s.x}" cy="${s.y}" r="${R}" fill="#fff" stroke="${c}" stroke-width="${rw}"/>`; ext = R + rw / 2; }
       const nx = s.nameX || 0, ny = s.nameY || 0, rot = s.nameRot || 0;
       const tx = s.x + nx, ty = s.y + ny + ext + 20;
-      const hubR = s.hub ? R + 4 : 0;
       h += `<g data-t="st" data-l="${l.id}" data-id="${s.id}">${body}` +
-           (s.hub ? `<circle cx="${s.x}" cy="${s.y}" r="${hubR}" fill="none" stroke="${c}" stroke-width="3" stroke-dasharray="5 3"/>` : '') +
+           (s.hub ? `<circle cx="${s.x}" cy="${s.y}" r="${R + 4}" fill="none" stroke="${c}" stroke-width="3" stroke-dasharray="5 3"/>` : '') +
            (sel ? `<circle cx="${s.x}" cy="${s.y}" r="${ext + 5}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` : '') +
            (rot ? `<text class="stname" data-t="stname" data-l="${l.id}" data-id="${s.id}" x="${tx}" y="${ty}" text-anchor="middle" font-size="14" font-weight="700" fill="${fg}" ${halo} style="cursor:move" transform="rotate(${rot} ${tx} ${ty})">${esc(s.name)}</text>`
                 : `<text class="stname" data-t="stname" data-l="${l.id}" data-id="${s.id}" x="${tx}" y="${ty}" text-anchor="middle" font-size="14" font-weight="700" fill="${fg}" ${halo} style="cursor:move">${esc(s.name)}</text>`) + '</g>';
     });
+  });
+  // 5) バス停(独立要素・最前面)
+  (m.stops || []).forEach(s => {
+    const sel = ui.sel && ui.sel.t === 'stop' && ui.sel.id === s.id;
+    const c = s.color || STOP_COLOR;
+    let body, ext;
+    if (s.kind === 'terminal') {
+      body = `<rect x="${s.x - 18}" y="${s.y - 10}" width="36" height="20" rx="5" fill="#fff" stroke="${c}" stroke-width="3"/><rect x="${s.x - 11}" y="${s.y - 2.5}" width="22" height="5" rx="2.5" fill="${c}" fill-opacity=".45"/>`;
+      ext = 13;
+    } else {
+      const r = 7;
+      body = `<rect x="${s.x - r}" y="${s.y - r}" width="${r * 2}" height="${r * 2}" rx="3" fill="#fff" stroke="${c}" stroke-width="3"/>`;
+      ext = r + 4;
+    }
+    const nx = s.nameX || 0, ny = s.nameY || 0, rot = s.nameRot || 0;
+    const tx = s.x + nx, ty = s.y + ny + ext + 18;
+    const nm = `<text class="stname" data-t="stopname" data-id="${s.id}" x="${tx}" y="${ty}" text-anchor="middle" font-size="13" font-weight="700" fill="${fg}" ${halo} style="cursor:move"${rot ? ` transform="rotate(${rot} ${tx} ${ty})"` : ''}>${esc(s.name)}</text>`;
+    h += `<g data-t="stop" data-id="${s.id}">${body}` +
+         (sel ? `<circle cx="${s.x}" cy="${s.y}" r="${ext + 5}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` : '') + nm + '</g>';
   });
   document.getElementById('cv').innerHTML = h;
 }
@@ -178,9 +250,28 @@ function renderSide() {
           `<label>駅名の向き<select id="snameRot"><option value="0"${(s.nameRot || 0) === 0 ? ' selected' : ''}>普通</option><option value="45"${(s.nameRot || 0) === 45 ? ' selected' : ''}>斜め(45°)</option><option value="90"${(s.nameRot || 0) === 90 ? ' selected' : ''}>縦(90°)</option></select></label>` +
           `<label><input type="checkbox" id="shub"${s.hub ? ' checked' : ''}> 乗り換え駅(ターミナルハブ)</label>` +
           (s.hub ? '<div class="note" style="margin-bottom:4px">乗り換え路線:</div>' +
-            curMap().lines.map(x => `<label style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><input type="checkbox" class="shubline" data-lid="${x.id}"${x.stations.some(st => st.id === s.id) ? ' checked' : ''} ${x.id === l.id ? 'disabled' : ''}> <i style="display:inline-block;width:18px;height:5px;border-radius:3px;background:${x.color};flex:none"></i>${esc(x.name)}${x.id === l.id ? '(この路線)' : ''}</label>`).join('') : '');
+            m.lines.map(x => `<label style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><input type="checkbox" class="shubline" data-lid="${x.id}"${x.stations.some(st => st.id === s.id) ? ' checked' : ''} ${x.id === l.id ? 'disabled' : ''}> <i style="display:inline-block;width:18px;height:5px;border-radius:3px;background:${x.color};flex:none"></i>${esc(x.name)}${x.id === l.id ? '(この路線)' : ''}</label>`).join('') : '');
         if (i > 0) sel += `<label>前の駅との間隔(マス)<input id="gap" type="number" min="0.5" step="0.5" value="${(dist(l.stations[i - 1], s) / G).toFixed(1)}"></label><p class="note">変更すると、これ以降の駅も一緒に動きます。</p>`;
       }
+    } else if (ui.sel.t === 'stop') {
+      const s = (m.stops || []).find(x => x.id === ui.sel.id);
+      if (!s) ui.sel = null;
+      else {
+        const kind = s.kind || 'stop';
+        sel = `<h3>${kind === 'terminal' ? '選択中のバスターミナル' : '選択中のバス停'}</h3><label>名称<input id="bsname" value="${esc(s.name)}"></label>` +
+          `<label>種別<select id="bskind">${Object.entries(STOP_KINDS).map(([k, v]) => `<option value="${k}"${kind === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>` +
+          `<div class="row" style="align-items:center"><span>色</span><input type="color" id="bscolor" value="${s.color || STOP_COLOR}"><button id="bsreset">標準色に戻す</button></div>` +
+          `<label>名称の向き<select id="bsnameRot"><option value="0"${(s.nameRot || 0) === 0 ? ' selected' : ''}>普通</option><option value="45"${(s.nameRot || 0) === 45 ? ' selected' : ''}>斜め(45°)</option><option value="90"${(s.nameRot || 0) === 90 ? ' selected' : ''}>縦(90°)</option></select></label>` +
+          `<p class="note">幹線道路とは独立した要素です。キャンバスのどこにでも置けます。</p>`;
+      }
+    } else if (ui.sel.t === 'road') {
+      const r = (m.roads || []).find(x => x.id === ui.sel.id);
+      if (!r) ui.sel = null;
+      else sel = `<h3>選択中の幹線道路</h3><label>名前<input id="rname" value="${esc(r.name)}"></label>` +
+        `<div class="row" style="align-items:center"><span>色</span><input type="color" id="rcolor" value="${r.color}"></div>` +
+        `<label>幅(${r.width})<input type="range" id="rwidth" min="6" max="40" step="1" value="${r.width}"></label>` +
+        `<div class="row"><button id="droad">この道路を削除</button></div>` +
+        `<p class="note">頂点(□)をドラッグすると形を調整できます。道路全体のドラッグで移動します。</p>`;
     } else if (ui.sel.t === 'bx') {
       const b = (m.boxes || []).find(b => b.id === ui.sel.id);
       if (!b) ui.sel = null;
@@ -201,7 +292,12 @@ function renderSide() {
     m.lines.map(x => `<li data-id="${x.id}" class="${x.id === l.id ? 'on' : ''}"><i style="background:${x.color}"></i>${esc(x.name)}</li>`).join('') +
     '</ul><button id="addline">路線を追加</button>' +
     `<h3>選択中の路線</h3><div class="row"><input id="lname" value="${esc(l.name)}"><input type="color" id="lcolor" value="${l.color}"></div>` +
-    `<label>線の太さ(${lw(l)})<input type="range" id="lwidth" min="2" max="24" step="1" value="${lw(l)}"></label><button id="dline">この路線を削除</button>`;
+    `<label>線の太さ(${lw(l)})<input type="range" id="lwidth" min="2" max="24" step="1" value="${lw(l)}"></label><button id="dline">この路線を削除</button>` +
+    '<h3>幹線道路</h3><ul id="roadlist">' +
+    ((m.roads || []).length
+      ? m.roads.map(r => `<li data-rid="${r.id}" class="${ui.sel && ui.sel.t === 'road' && ui.sel.id === r.id ? 'on' : ''}"><i style="background:${r.color}"></i>${esc(r.name)}</li>`).join('')
+      : '<li style="opacity:.6;cursor:default">まだありません</li>') +
+    '</ul><button id="addroadp">幹線道路を引く</button>';
 }
 function renderAll() {
   const hm = ui.home;
@@ -216,6 +312,16 @@ function renderAll() {
 }
 
 /* ---------- editing ---------- */
+// 乗り換え(複数路線に共有)のON/OFF。OFFのときは現在の路線だけ残して他から外す(順番は維持)
+function setHub(st, on) {
+  if (!st) return;
+  if (on) { st.hub = true; return; }
+  st.hub = false;
+  const keep = ui.line;
+  curMap().lines.forEach(x => { if (x.id !== keep) x.stations = x.stations.filter(y => y.id !== st.id); });
+  const home = curMap().lines.find(x => x.id === keep);
+  if (home && !home.stations.some(y => y.id === st.id)) home.stations.push(st);
+}
 function addStation(p) {
   const l = curLine(), m = curMap();
   const r = project(l, p);
@@ -234,13 +340,57 @@ function addHubStation(p) {
   const m = curMap(), l = curLine();
   ensureRoom(m, p.x, p.y);
   const q = { x: clamp(Math.round(p.x / G) * G, 0, mw(m)), y: clamp(Math.round(p.y / G) * G, 0, mh(m)) };
-  const st = mkStation('乗換駅' + (m.lines.reduce((n, x) => n + x.stations.length, 0) + 1), q.x, q.y);
+  const n = m.lines.reduce((n, x) => n + x.stations.length, 0) + 1;
+  const st = mkStation('乗換駅' + n, q.x, q.y);
   st.hub = true;
   // 選択中の路線に追加
   l.stations.push(st);
   ui.sel = { t: 'st', id: st.id };
   ui.tool = 'select';
   save(); renderAll();
+}
+/* --- バス停(独立要素) --- */
+function addBusStop(p, kind) {
+  const m = curMap();
+  ensureRoom(m, p.x, p.y);
+  const q = { x: clamp(Math.round(p.x / G) * G, 0, mw(m)), y: clamp(Math.round(p.y / G) * G, 0, mh(m)) };
+  m.stops = m.stops || [];
+  const n = m.stops.filter(s => (s.kind || 'stop') === kind).length + 1;
+  const st = mkBusStop((kind === 'terminal' ? 'バスターミナル' : 'バス停') + n, q.x, q.y, kind);
+  m.stops.push(st);
+  ui.sel = { t: 'stop', id: st.id };
+  afterAdd(); save(); renderAll();
+}
+/* --- 幹線道路(独立要素・頂点をクリックして引く) --- */
+function startRoadDrawing() { ui.drawing = { pts: [], hover: null }; renderAll(); }
+function finishRoad() {
+  const d = ui.drawing; ui.drawing = null;
+  if (d && d.pts.length >= 2) {
+    const m = curMap();
+    m.roads = m.roads || [];
+    const used = new Set([...m.roads.map(r => r.color), ...m.lines.map(x => x.color)]);
+    const color = COLORS.find(c => !used.has(c)) || COLORS[m.roads.length % COLORS.length];
+    const r = mkRoad('幹線道路 ' + (m.roads.length + 1), color, d.pts);
+    m.roads.push(r);
+    ui.sel = { t: 'road', id: r.id };
+    ui.tool = 'select';
+    save();
+  } else {
+    ui.tool = 'select';   // 頂点不足なら中止
+  }
+  renderAll();
+}
+function cancelRoad() { ui.drawing = null; ui.tool = 'select'; renderAll(); }
+function addRoadPoint(p) {
+  const m = curMap();
+  ensureRoom(m, p.x, p.y);
+  const snap = document.getElementById('snap').checked;
+  const q = { x: clamp(snap ? Math.round(p.x / G) * G : Math.round(p.x), 0, mw(m)), y: clamp(snap ? Math.round(p.y / G) * G : Math.round(p.y), 0, mh(m)) };
+  const d = ui.drawing;
+  // 最初の頂点付近をクリックしたら閉じて確定
+  if (d.pts.length >= 2 && dist(d.pts[0], q) < 14) { finishRoad(); return; }
+  d.pts.push(q);
+  renderCanvas();
 }
 function addCrossing(p) {
   let best = null;
@@ -253,15 +403,17 @@ function addCrossing(p) {
 }
 function del() {
   if (!ui.sel) return;
-  const l = curLine(), id = ui.sel.id;
+  const m = curMap(), l = curLine(), id = ui.sel.id;
   if (ui.sel.t === 'st') {
-    // 乗り換e駅の場合はすべての路線から削除
+    // 乗り換え駅の場合はすべての路線から削除
     const s = l.stations.find(st => st.id === id);
-    if (s && s.hub) curMap().lines.forEach(x => { x.stations = x.stations.filter(st => st.id !== id); });
+    if (s && s.hub) m.lines.forEach(x => { x.stations = x.stations.filter(st => st.id !== id); });
     else keepCrossings(l, () => { l.stations = l.stations.filter(st => st.id !== id); });
   }
-  else if (ui.sel.t === 'bx') curMap().boxes = (curMap().boxes || []).filter(b => b.id !== id);
-  else l.crossings = l.crossings.filter(c => c.id !== id);
+  else if (ui.sel.t === 'stop') m.stops = (m.stops || []).filter(s => s.id !== id);
+  else if (ui.sel.t === 'road') m.roads = (m.roads || []).filter(r => r.id !== id);
+  else if (ui.sel.t === 'bx') m.boxes = (m.boxes || []).filter(b => b.id !== id);
+  else if (ui.sel.t === 'cx') l.crossings = l.crossings.filter(c => c.id !== id);
   ui.sel = null; save(); renderAll();
 }
 
@@ -323,6 +475,9 @@ cv.addEventListener('mousedown', e => {
   if (ui.tool === 'station') return addStation(p);
   if (ui.tool === 'hub') return addHubStation(p);
   if (ui.tool === 'crossing') return addCrossing(p);
+  if (ui.tool === 'busstop') return addBusStop(p, 'stop');
+  if (ui.tool === 'terminal') return addBusStop(p, 'terminal');
+  if (ui.tool === 'road') { if (!ui.drawing) ui.drawing = { pts: [], hover: null }; addRoadPoint(p); return; }
   if (ui.tool === 'box') {
     const q = snapPt(p), b = { id: uid(), x: q.x, y: q.y, w: G * 6, h: G * 3, text: 'ラベル', fill: '#ffffff' };
     (m.boxes = m.boxes || []).push(b);
@@ -330,10 +485,36 @@ cv.addEventListener('mousedown', e => {
     renderAll(); return;
   }
   if (el && el.dataset.t === 'bxr') { ui.sel = { t: 'bx', id: el.dataset.id }; drag = { t: 'bxr', id: el.dataset.id }; }
-  else if (el.dataset.t === 'stname') {
-    const s = curLine().stations.find(s => s.id === el.dataset.id);
-    ui.sel = { t: 'st', id: s.id };
-    drag = { t: 'stname', id: s.id, ox: p.x - (s.x + (s.nameX || 0)), oy: p.y - (s.y + (s.nameY || 0)) };
+  else if (el && el.dataset.t === 'stname') {
+    const line = m.lines.find(x => x.id === el.dataset.l) || curLine();
+    const s = line.stations.find(s => s.id === el.dataset.id);
+    if (s) {
+      ui.line = line.id;
+      ui.sel = { t: 'st', id: s.id };
+      drag = { t: 'stname', id: s.id, ox: p.x - (s.x + (s.nameX || 0)), oy: p.y - (s.y + (s.nameY || 0)) };
+    }
+  }
+  else if (el && el.dataset.t === 'stopname') {
+    const s = (m.stops || []).find(s => s.id === el.dataset.id);
+    if (s) {
+      ui.sel = { t: 'stop', id: s.id };
+      drag = { t: 'stopname', id: s.id, ox: p.x - (s.x + (s.nameX || 0)), oy: p.y - (s.y + (s.nameY || 0)) };
+    }
+  }
+  else if (el && el.dataset.t === 'roadpt') {
+    ui.sel = { t: 'road', id: el.dataset.id };
+    drag = { t: 'roadpt', id: el.dataset.id, i: +el.dataset.i };
+  }
+  else if (el && el.dataset.t === 'road') {
+    const r = (m.roads || []).find(r => r.id === el.dataset.id);
+    if (r && r.pts.length) {
+      ui.sel = { t: 'road', id: r.id };
+      drag = { t: 'road', id: r.id, ox: p.x - r.pts[0].x, oy: p.y - r.pts[0].y, start: r.pts.map(q => ({ x: q.x, y: q.y })) };
+    }
+  }
+  else if (el && el.dataset.t === 'stop') {
+    const s = (m.stops || []).find(s => s.id === el.dataset.id);
+    if (s) { ui.sel = { t: 'stop', id: s.id }; drag = { t: 'stop', id: s.id, ox: p.x - s.x, oy: p.y - s.y }; }
   }
   else if (el && el.dataset.t === 'bx') {
     const b = m.boxes.find(b => b.id === el.dataset.id);
@@ -348,22 +529,46 @@ window.addEventListener('mousemove', e => {
   if (!drag) return;
   const m = curMap(), l = curLine(), p = pt(e);
   if (drag.t === 'st') {
-    const s = l.stations.find(s => s.id === drag.id), q = snapPt(p);
+    const s = l.stations.find(s => s.id === drag.id); if (!s) return;
+    const q = snapPt(p);
     ensureRoom(m, q.x, q.y);
     s.x = clamp(q.x, 0, mw(m)); s.y = clamp(q.y, 0, mh(m));
-    // 乗り換e駅の場合はすべての路線の同じ駅を更新
+    // 乗り換え駅の場合はすべての路線の同じ駅を更新
     if (s.hub) curMap().lines.forEach(x => {
       const st = x.stations.find(st => st.id === s.id);
       if (st) { st.x = s.x; st.y = s.y; }
     });
   } else if (drag.t === 'stname') {
-    const s = l.stations.find(s => s.id === drag.id);
+    const s = l.stations.find(s => s.id === drag.id); if (!s) return;
     const q = snapPt(p);
     s.nameX = q.x - drag.ox - s.x;
     s.nameY = q.y - drag.oy - s.y;
   } else if (drag.t === 'cx') {
-    const c = l.crossings.find(c => c.id === drag.id), r = project(l, p);
+    const c = l.crossings.find(c => c.id === drag.id); if (!c) return;
+    const r = project(l, p);
     if (r) { const q = snapCx(l, r); c.seg = q.seg; c.t = q.t; }
+  } else if (drag.t === 'stop') {
+    const s = (m.stops || []).find(s => s.id === drag.id); if (!s) return;
+    const q = snapPt({ x: p.x - drag.ox, y: p.y - drag.oy });
+    ensureRoom(m, q.x, q.y);
+    s.x = clamp(q.x, 0, mw(m)); s.y = clamp(q.y, 0, mh(m));
+  } else if (drag.t === 'stopname') {
+    const s = (m.stops || []).find(s => s.id === drag.id); if (!s) return;
+    const q = snapPt(p);
+    s.nameX = q.x - drag.ox - s.x;
+    s.nameY = q.y - drag.oy - s.y;
+  } else if (drag.t === 'road') {
+    const r = (m.roads || []).find(r => r.id === drag.id); if (!r) return;
+    const q = snapPt({ x: p.x - drag.ox, y: p.y - drag.oy });
+    const dx = q.x - drag.start[0].x, dy = q.y - drag.start[0].y;
+    const maxR = Math.max(...r.pts.map(pt => pt.x)) + dx, maxD = Math.max(...r.pts.map(pt => pt.y)) + dy;
+    ensureRoom(m, maxR, maxD);
+    r.pts.forEach((pt, i) => { pt.x = clamp(drag.start[i].x + dx, 0, mw(m)); pt.y = clamp(drag.start[i].y + dy, 0, mh(m)); });
+  } else if (drag.t === 'roadpt') {
+    const r = (m.roads || []).find(r => r.id === drag.id); if (!r) return;
+    const q = snapPt(p);
+    ensureRoom(m, q.x, q.y);
+    r.pts[drag.i] = { x: clamp(q.x, 0, mw(m)), y: clamp(q.y, 0, mh(m)) };
   } else {
     const b = (m.boxes || []).find(b => b.id === drag.id); if (!b) return;
     if (drag.t === 'bx') { const q = snapPt({ x: p.x - drag.ox, y: p.y - drag.oy }); ensureRoom(m, q.x + b.w, q.y + b.h); b.x = clamp(q.x, 0, mw(m) - b.w); b.y = clamp(q.y, 0, mh(m) - b.h); }
@@ -384,11 +589,23 @@ window.addEventListener('mouseup', () => {
   const was = drag; drag = null; save();
   if (was.t === 'bxnew') { afterAdd(); renderAll(); }
 });
+// 幹線道路ツール: マウス位置への予告線
+window.addEventListener('mousemove', e => {
+  if (!ui.drawing || drag) return;
+  ui.drawing.hover = snapPt(pt(e));
+  renderCanvas();
+});
+// ダブルクリックで道路を確定
+cv.addEventListener('dblclick', () => { if (ui.drawing) finishRoad(); });
 window.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') { e.preventDefault(); if (!window.__closeTab()) window.close(); return; }
   if (/INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
   if (e.key === 'Delete' || e.key === 'Backspace') del();
-  if (e.key === 'Escape') { ui.tool = 'select'; renderTools(); }
+  if (e.key === 'Enter' && ui.drawing) { finishRoad(); return; }
+  if (e.key === 'Escape') {
+    if (ui.drawing) cancelRoad();
+    else { ui.tool = 'select'; renderTools(); }
+  }
   if (e.code === 'Space') {   // Space押下中はドラッグで画面をスクロール
     e.preventDefault();
     if (!spaceDown) { spaceDown = true; stage.style.cursor = 'grab'; }
@@ -401,7 +618,12 @@ window.addEventListener('keyup', e => {
 /* ---------- toolbar / tabs ---------- */
 document.getElementById('tools').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
-  if (b.dataset.tool) { ui.tool = b.dataset.tool; renderTools(); }
+  if (b.dataset.tool) {
+    if (ui.drawing && b.dataset.tool !== 'road') finishRoad();
+    ui.tool = b.dataset.tool;
+    if (ui.tool === 'road') startRoadDrawing();
+    renderTools(); renderCanvas();
+  }
   if (b.id === 'del') del();
   if (b.id === 'zin') setZoom(ui.zoom * 1.25);
   if (b.id === 'zout') setZoom(ui.zoom / 1.25);
@@ -421,7 +643,8 @@ document.getElementById('file').addEventListener('change', e => {
     try {
       const d = JSON.parse(r.result);
       if (!Array.isArray(d.maps) || !d.maps.length || !d.maps.every(m => Array.isArray(m.lines) && m.lines.length)) throw 0;
-      S = d; ui = { map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: ui.zoom }; persistOpen();
+      S = migrate(d);
+      ui = { map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: ui.zoom, drawing: null }; persistOpen();
       save(); renderAll();
     } catch (err) { alert('読み込めませんでした。書き出したJSONファイルを選んでください。'); }
   };
@@ -508,17 +731,25 @@ side.addEventListener('input', e => {
   else if (id === 'mbg') { m.bg = v; renderCanvas(); }
   else if (id === 'btext') { m.boxes.find(b => b.id === ui.sel.id).text = v; renderCanvas(); }
   else if (id === 'bfill') { m.boxes.find(b => b.id === ui.sel.id).fill = v; renderCanvas(); }
-  else if (id === 'sshape') { l.stations.find(s => s.id === ui.sel.id).shape = v; renderCanvas(); }
+  else if (id === 'sshape') {
+    const s = l.stations.find(s => s.id === ui.sel.id);
+    s.shape = v;
+    renderCanvas();
+  }
+  else if (id === 'bsname') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { s.name = v; renderCanvas(); } }
+  else if (id === 'bskind') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { s.kind = v; save(); renderAll(); } }
+  else if (id === 'bscolor') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { s.color = v; renderCanvas(); } }
+  else if (id === 'bsnameRot') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { s.nameRot = +v; renderCanvas(); } }
+  else if (id === 'rname') { const r = (m.roads || []).find(r => r.id === ui.sel.id); if (r) { r.name = v; renderSide(); } }
+  else if (id === 'rcolor') { const r = (m.roads || []).find(r => r.id === ui.sel.id); if (r) { r.color = v; renderCanvas(); } }
+  else if (id === 'rwidth') {
+    const r = (m.roads || []).find(r => r.id === ui.sel.id);
+    if (r) { r.width = +v; e.target.parentNode.firstChild.textContent = '幅(' + v + ')'; renderCanvas(); }
+  }
   else if (id === 'scolor') { l.stations.find(s => s.id === ui.sel.id).color = v; renderCanvas(); }
   else if (id === 'snameRot') { l.stations.find(s => s.id === ui.sel.id).nameRot = +v; renderCanvas(); }
   else if (id === 'shub') {
-    const s = l.stations.find(s => s.id === ui.sel.id);
-    s.hub = e.target.checked;
-    if (!s.hub) {
-      // 乗り換e駅を解除：他の路線からこの駅を削除
-      curMap().lines.forEach(x => { x.stations = x.stations.filter(st => st.id !== s.id); });
-      l.stations.push(s);
-    }
+    setHub(l.stations.find(s => s.id === ui.sel.id), e.target.checked);
     save(); renderAll();
   }
   else if (e.target.classList && e.target.classList.contains('shubline')) {
@@ -558,13 +789,19 @@ side.addEventListener('change', e => {
   renderSide();
 });
 side.addEventListener('click', e => {
-  const m = curMap(), li = e.target.closest('#lines li'), id = e.target.id;
+  const m = curMap(), li = e.target.closest('#lines li'), rli = e.target.closest('#roadlist li[data-rid]'), id = e.target.id;
   if (li) { ui.line = li.dataset.id; ui.sel = null; renderAll(); }
+  else if (rli) { ui.sel = { t: 'road', id: rli.dataset.rid }; ui.tool = 'select'; renderAll(); }
   else if (id === 'sreset') { delete curLine().stations.find(s => s.id === ui.sel.id).color; save(); renderAll(); }
+  else if (id === 'bsreset') { const s = (m.stops || []).find(s => s.id === ui.sel.id); delete s.color; save(); renderAll(); }
+  else if (id === 'droad') { m.roads = (m.roads || []).filter(r => r.id !== ui.sel.id); ui.sel = null; save(); renderAll(); }
   else if (id === 'newwin') window.open('index.html#' + encodeURIComponent(m.id));
   else if (id === 'addline') {
     const n = m.lines.length, l = mkLine((n + 1) + '号線', COLORS[n % COLORS.length]);
     m.lines.push(l); ui.line = l.id; ui.sel = null; save(); renderAll();
+  } else if (id === 'addroadp') {
+    if (ui.drawing) finishRoad();
+    ui.tool = 'road'; startRoadDrawing(); renderTools();
   } else if (id === 'dline') {
     if (m.lines.length > 1) { m.lines = m.lines.filter(x => x.id !== ui.line); ui.line = m.lines[0].id; }
     else { m.lines[0].stations = []; m.lines[0].crossings = []; }
