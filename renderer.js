@@ -15,7 +15,7 @@ const STOP_COLOR = '#1f2d36';   // バス停の既定色(道路とは無関係)
 const HINTS = {
   select:   '駅・バス停・道路をドラッグして移動 / Deleteキーで削除 / Space+ドラッグで画面移動',
   station:  'クリックで駅を追加(線の上なら間に挿入)',
-  hub:      'クリックで乗り換え駅を追加(複数路線に属します)',
+  hub:      'クリックで乗り換え駅を追加(どの路線にも属さない独立駅。右パネルで路線に組み込める)',
   crossing: '線の近くをクリックして踏切を置く',
   busstop:  'クリックでバス停を配置(幹線道路とは独立して置けます)',
   terminal: 'クリックでバスターミナルを配置',
@@ -31,7 +31,7 @@ const mkLine = (name, color) => ({ id: uid(), name, color, width: 8, stations: [
 const mkRoad = (name, color, pts) => ({ id: uid(), name, color, width: 16, pts: pts || [] });
 // バス停(独立要素)。路線・道路に属さない
 const mkBusStop = (name, x, y, kind) => ({ id: uid(), name, x, y, kind: kind || 'stop' });
-const mkMap = name => ({ id: uid(), name, bg: BG, lines: [mkLine('1号線', COLORS[0])], roads: [], stops: [] });
+const mkMap = name => ({ id: uid(), name, bg: BG, lines: [mkLine('1号線', COLORS[0])], roads: [], stops: [], hubs: [] });
 const mkStation = (name, x, y) => ({ id: uid(), name, x, y, hub: false });
 const lw = l => l.width || 8;
 const isDark = hex => { const n = parseInt(hex.slice(1), 16); return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) < 120; };
@@ -44,6 +44,7 @@ function migrate(data) {
   data.maps.forEach(m => {
     if (!Array.isArray(m.roads)) m.roads = [];
     if (!Array.isArray(m.stops)) m.stops = [];
+    if (!Array.isArray(m.hubs)) m.hubs = [];   // 路線に属さない乗り換え駅の置き場所
     if (!Array.isArray(m.lines) || !m.lines.length) { m.lines = [mkLine('1号線', COLORS[0])]; return; }
     const oldRoads = m.lines.filter(l => l.type === 'road');
     if (!oldRoads.length) return;
@@ -73,6 +74,13 @@ else {
 
 const curMap  = () => S.maps.find(m => m.id === ui.map) || S.maps[0];
 const curLine = () => { const m = curMap(); return m.lines.find(l => l.id === ui.line) || m.lines[0]; };
+// 駅を探す(路線のstationsにも、路線に属さない乗り換え駅のm.hubsにも入っている)
+const findStation = id => {
+  const m = curMap();
+  return (m.hubs || []).find(s => s.id === id) || m.lines.flatMap(l => l.stations).find(s => s.id === id);
+};
+// その駅が属する路線(0〜複数。乗り換え駅は0本のこともある)
+const linesOf = id => curMap().lines.filter(l => l.stations.some(s => s.id === id));
 
 /* ---------- 履歴 (元に戻す / やり直す) ---------- */
 const snapStr = () => { try { return JSON.stringify(S); } catch (e) { return ''; } };
@@ -257,25 +265,26 @@ function renderCanvas() {
       if (c.name) h += `<text x="${p.x + 18}" y="${p.y - rh - 4}" font-size="12" fill="${fg}" ${halo}>${esc(c.name)}</text>`;
     });
   });
-  // 4) 駅
-  m.lines.forEach(l => {
-    const w = lw(l), R = w / 2 + 7, rw = Math.max(5, w * 0.6);
-    l.stations.forEach(s => {
-      const sel = ui.sel && ui.sel.t === 'st' && ui.sel.id === s.id, c = s.color || l.color, sh = s.shape || 'circle';
-      let body, ext;
-      if (sh === 'double') { body = `<circle cx="${s.x}" cy="${s.y}" r="${R + 3}" fill="#fff" stroke="${c}" stroke-width="4"/><circle cx="${s.x}" cy="${s.y}" r="${Math.max(3, R - 5)}" fill="#fff" stroke="${c}" stroke-width="3"/>`; ext = R + 5; }
-      else if (sh === 'square') { body = `<rect x="${s.x - R}" y="${s.y - R}" width="${R * 2}" height="${R * 2}" rx="2" fill="#fff" stroke="${c}" stroke-width="${rw}"/>`; ext = R + rw / 2; }
-      else if (sh === 'diamond') { const d = R * 1.35; body = `<polygon points="${s.x},${s.y - d} ${s.x + d},${s.y} ${s.x},${s.y + d} ${s.x - d},${s.y}" fill="#fff" stroke="${c}" stroke-width="${rw * 0.8}" stroke-linejoin="round"/>`; ext = d + 2; }
-      else { body = `<circle cx="${s.x}" cy="${s.y}" r="${R}" fill="#fff" stroke="${c}" stroke-width="${rw}"/>`; ext = R + rw / 2; }
-      const nx = s.nameX || 0, ny = s.nameY || 0, rot = s.nameRot || 0;
-      const tx = s.x + nx, ty = s.y + ny + ext + 20;
-      h += `<g data-t="st" data-l="${l.id}" data-id="${s.id}">${body}` +
-           (s.hub ? `<circle cx="${s.x}" cy="${s.y}" r="${R + 4}" fill="none" stroke="${c}" stroke-width="3" stroke-dasharray="5 3"/>` : '') +
-           (sel ? `<circle cx="${s.x}" cy="${s.y}" r="${ext + 5}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` : '') +
-           (rot ? `<text class="stname" data-t="stname" data-l="${l.id}" data-id="${s.id}" x="${tx}" y="${ty}" text-anchor="middle" font-size="14" font-weight="700" fill="${fg}" ${halo} style="cursor:move" transform="rotate(${rot} ${tx} ${ty})">${esc(s.name)}</text>`
-                : `<text class="stname" data-t="stname" data-l="${l.id}" data-id="${s.id}" x="${tx}" y="${ty}" text-anchor="middle" font-size="14" font-weight="700" fill="${fg}" ${halo} style="cursor:move">${esc(s.name)}</text>`) + '</g>';
-    });
-  });
+  // 4) 駅(路線の駅 + 路線に属さない乗り換え駅)
+  const drawStation = (s, l) => {
+    const w = l ? lw(l) : 8, R = w / 2 + 7, rw = Math.max(5, w * 0.6);
+    const sel = ui.sel && ui.sel.t === 'st' && ui.sel.id === s.id, c = s.color || (l ? l.color : STOP_COLOR), sh = s.shape || 'circle';
+    let body, ext;
+    if (sh === 'double') { body = `<circle cx="${s.x}" cy="${s.y}" r="${R + 3}" fill="#fff" stroke="${c}" stroke-width="4"/><circle cx="${s.x}" cy="${s.y}" r="${Math.max(3, R - 5)}" fill="#fff" stroke="${c}" stroke-width="3"/>`; ext = R + 5; }
+    else if (sh === 'square') { body = `<rect x="${s.x - R}" y="${s.y - R}" width="${R * 2}" height="${R * 2}" rx="2" fill="#fff" stroke="${c}" stroke-width="${rw}"/>`; ext = R + rw / 2; }
+    else if (sh === 'diamond') { const d = R * 1.35; body = `<polygon points="${s.x},${s.y - d} ${s.x + d},${s.y} ${s.x},${s.y + d} ${s.x - d},${s.y}" fill="#fff" stroke="${c}" stroke-width="${rw * 0.8}" stroke-linejoin="round"/>`; ext = d + 2; }
+    else { body = `<circle cx="${s.x}" cy="${s.y}" r="${R}" fill="#fff" stroke="${c}" stroke-width="${rw}"/>`; ext = R + rw / 2; }
+    const nx = s.nameX || 0, ny = s.nameY || 0, rot = s.nameRot || 0;
+    const tx = s.x + nx, ty = s.y + ny + ext + 20;
+    const dl = l ? ` data-l="${l.id}"` : '';
+    h += `<g data-t="st"${dl} data-id="${s.id}">${body}` +
+         (s.hub ? `<circle cx="${s.x}" cy="${s.y}" r="${R + 4}" fill="none" stroke="${c}" stroke-width="3" stroke-dasharray="5 3"/>` : '') +
+         (sel ? `<circle cx="${s.x}" cy="${s.y}" r="${ext + 5}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` : '') +
+         (rot ? `<text class="stname" data-t="stname"${dl} data-id="${s.id}" x="${tx}" y="${ty}" text-anchor="middle" font-size="14" font-weight="700" fill="${fg}" ${halo} style="cursor:move" transform="rotate(${rot} ${tx} ${ty})">${esc(s.name)}</text>`
+              : `<text class="stname" data-t="stname"${dl} data-id="${s.id}" x="${tx}" y="${ty}" text-anchor="middle" font-size="14" font-weight="700" fill="${fg}" ${halo} style="cursor:move">${esc(s.name)}</text>`) + '</g>';
+  };
+  m.lines.forEach(l => l.stations.forEach(s => drawStation(s, l)));
+  (m.hubs || []).forEach(s => drawStation(s, null));   // 路線外の乗り換え駅
   // 5) バス停(独立要素・最前面)
   (m.stops || []).forEach(s => {
     const sel = ui.sel && ui.sel.t === 'stop' && ui.sel.id === s.id;
@@ -303,18 +312,22 @@ function renderSide() {
   let sel = '';
   if (ui.sel) {
     if (ui.sel.t === 'st') {
-      const i = l.stations.findIndex(s => s.id === ui.sel.id);
-      if (i < 0) ui.sel = null;
+      const s = findStation(ui.sel.id);
+      if (!s) ui.sel = null;
       else {
-        const s = l.stations[i];
-        sel = `<h3>選択中の駅</h3><label>駅名<input id="sname" value="${esc(s.name)}"></label>` +
+        const ls = linesOf(s.id);   // 属する路線(乗り換え駅は0本のこともある)
+        const gl = ls.some(x => x.id === l.id) ? l : ls[0];   // 間隔を表示する路線
+        const i = gl ? gl.stations.findIndex(x => x.id === s.id) : -1;
+        const head = ls.length ? '選択中の駅' : '選択中の乗り換え駅(路線外)';
+        sel = `<h3>${head}</h3><label>駅名<input id="sname" value="${esc(s.name)}"></label>` +
           `<label>形<select id="sshape">${Object.entries(SHAPES).map(([k, v]) => `<option value="${k}"${(s.shape || 'circle') === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>` +
-          `<div class="row" style="align-items:center"><span>色</span><input type="color" id="scolor" value="${s.color || l.color}"><button id="sreset">路線の色に戻す</button></div>` +
+          `<div class="row" style="align-items:center"><span>色</span><input type="color" id="scolor" value="${s.color || (ls.length ? ls[0].color : STOP_COLOR)}"><button id="sreset">路線の色に戻す</button></div>` +
           `<label>駅名の向き<select id="snameRot"><option value="0"${(s.nameRot || 0) === 0 ? ' selected' : ''}>普通</option><option value="45"${(s.nameRot || 0) === 45 ? ' selected' : ''}>斜め(45°)</option><option value="90"${(s.nameRot || 0) === 90 ? ' selected' : ''}>縦(90°)</option></select></label>` +
           `<label><input type="checkbox" id="shub"${s.hub ? ' checked' : ''}> 乗り換え駅(ターミナルハブ)</label>` +
-          (s.hub ? '<div class="note" style="margin-bottom:4px">乗り換え路線:</div>' +
-            m.lines.map(x => `<label style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><input type="checkbox" class="shubline" data-lid="${x.id}"${x.stations.some(st => st.id === s.id) ? ' checked' : ''} ${x.id === l.id ? 'disabled' : ''}> <i style="display:inline-block;width:18px;height:5px;border-radius:3px;background:${x.color};flex:none"></i>${esc(x.name)}${x.id === l.id ? '(この路線)' : ''}</label>`).join('') : '');
-        if (i > 0) sel += `<label>前の駅との間隔(マス)<input id="gap" type="number" min="0.5" step="0.5" value="${(dist(l.stations[i - 1], s) / G).toFixed(1)}"></label><p class="note">変更すると、これ以降の駅も一緒に動きます。</p>`;
+          (s.hub ? '<div class="note" style="margin-bottom:4px">属する路線:</div>' +
+            m.lines.map(x => `<label style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><input type="checkbox" class="shubline" data-lid="${x.id}"${x.stations.some(st => st.id === s.id) ? ' checked' : ''}> <i style="display:inline-block;width:18px;height:5px;border-radius:3px;background:${x.color};flex:none"></i>${esc(x.name)}</label>`).join('') +
+            `<p class="note">${ls.length ? 'チェックを全部外すと、どの路線にも属さない乗り換え駅(路線外)になります。' : '現在、どの路線にも属していません(路線外)。チェックした路線に組み込めます。'}</p>` : '');
+        if (gl && i > 0) sel += `<label>前の駅との間隔(マス)<input id="gap" data-lid="${gl.id}" type="number" min="0.5" step="0.5" value="${(dist(gl.stations[i - 1], s) / G).toFixed(1)}"></label><p class="note">変更すると、これ以降の駅も一緒に動きます。</p>`;
       }
     } else if (ui.sel.t === 'stop') {
       const s = (m.stops || []).find(x => x.id === ui.sel.id);
@@ -375,15 +388,16 @@ function renderAll() {
 }
 
 /* ---------- editing ---------- */
-// 乗り換え(複数路線に共有)のON/OFF。OFFのときは現在の路線だけ残して他から外す(順番は維持)
+// 乗り換え(複数路線に共有)のON/OFF。OFFのときは通常の駅に戻るので、必ずどこかの路線に乗せる
 function setHub(st, on) {
   if (!st) return;
+  const m = curMap();
   if (on) { st.hub = true; return; }
   st.hub = false;
-  const keep = ui.line;
-  curMap().lines.forEach(x => { if (x.id !== keep) x.stations = x.stations.filter(y => y.id !== st.id); });
-  const home = curMap().lines.find(x => x.id === keep);
+  const home = m.lines.find(x => x.id === ui.line) || m.lines[0];
   if (home && !home.stations.some(y => y.id === st.id)) home.stations.push(st);
+  m.lines.forEach(x => { if (x.id !== home.id) x.stations = x.stations.filter(y => y.id !== st.id); });
+  m.hubs = (m.hubs || []).filter(y => y.id !== st.id);   // 路線外の置き場所からは外す
 }
 function addStation(p) {
   const l = curLine(), m = curMap();
@@ -400,14 +414,14 @@ function addStation(p) {
   afterAdd(); save(); renderAll();
 }
 function addHubStation(p) {
-  const m = curMap(), l = curLine();
+  const m = curMap();
   ensureRoom(m, p.x, p.y);
   const q = { x: clamp(Math.round(p.x / G) * G, 0, mw(m)), y: clamp(Math.round(p.y / G) * G, 0, mh(m)) };
-  const n = m.lines.reduce((n, x) => n + x.stations.length, 0) + 1;
+  const n = m.lines.reduce((n, x) => n + x.stations.length, 0) + (m.hubs || []).length + 1;
   const st = mkStation('乗換駅' + n, q.x, q.y);
   st.hub = true;
-  // 選択中の路線に追加
-  l.stations.push(st);
+  // どの路線にも属さない独立した乗り換え駅として置く(右パネルのチェックリストで路線に組み込める)
+  (m.hubs = m.hubs || []).push(st);
   ui.sel = { t: 'st', id: st.id };
   ui.tool = 'select';
   save(); renderAll();
@@ -475,10 +489,14 @@ function del() {
   if (!ui.sel) return;
   const m = curMap(), l = curLine(), id = ui.sel.id;
   if (ui.sel.t === 'st') {
-    // 乗り換え駅の場合はすべての路線から削除
-    const s = l.stations.find(st => st.id === id);
-    if (s && s.hub) m.lines.forEach(x => { x.stations = x.stations.filter(st => st.id !== id); });
-    else keepCrossings(l, () => { l.stations = l.stations.filter(st => st.id !== id); });
+    const s = findStation(id);
+    if (s && s.hub) {   // 乗り換え駅は、すべての路線と路線外の置き場所から削除
+      m.lines.forEach(x => { x.stations = x.stations.filter(st => st.id !== id); });
+      m.hubs = (m.hubs || []).filter(st => st.id !== id);
+    } else {
+      const home = m.lines.find(x => x.stations.some(st => st.id === id)) || l;
+      keepCrossings(home, () => { home.stations = home.stations.filter(st => st.id !== id); });
+    }
   }
   else if (ui.sel.t === 'stop') m.stops = (m.stops || []).filter(s => s.id !== id);
   else if (ui.sel.t === 'road') m.roads = (m.roads || []).filter(r => r.id !== id);
@@ -555,13 +573,16 @@ cv.addEventListener('mousedown', e => {
     renderAll(); return;
   }
   if (el && el.dataset.t === 'bxr') { ui.sel = { t: 'bx', id: el.dataset.id }; drag = { t: 'bxr', id: el.dataset.id }; }
-  else if (el && el.dataset.t === 'stname') {
-    const line = m.lines.find(x => x.id === el.dataset.l) || curLine();
-    const s = line.stations.find(s => s.id === el.dataset.id);
+  else if (el && (el.dataset.t === 'stname' || el.dataset.t === 'st')) {
+    const s = findStation(el.dataset.id);
     if (s) {
-      ui.line = line.id;
+      // 属する路線があればそれに合わせる(路線外の乗り換え駅なら、いま選んでいる路線のまま)
+      const ls = linesOf(s.id);
+      if (ls.length && !ls.some(x => x.id === ui.line)) ui.line = ls[0].id;
       ui.sel = { t: 'st', id: s.id };
-      drag = { t: 'stname', id: s.id, ox: p.x - (s.x + (s.nameX || 0)), oy: p.y - (s.y + (s.nameY || 0)) };
+      drag = el.dataset.t === 'stname'
+        ? { t: 'stname', id: s.id, ox: p.x - (s.x + (s.nameX || 0)), oy: p.y - (s.y + (s.nameY || 0)) }
+        : { t: 'st', id: s.id };
     }
   }
   else if (el && el.dataset.t === 'stopname') {
@@ -590,8 +611,8 @@ cv.addEventListener('mousedown', e => {
     const b = m.boxes.find(b => b.id === el.dataset.id);
     ui.sel = { t: 'bx', id: b.id }; drag = { t: 'bx', id: b.id, ox: p.x - b.x, oy: p.y - b.y };
   }
-  else if (el && el.dataset.t !== 'line') { ui.line = el.dataset.l; ui.sel = { t: el.dataset.t, id: el.dataset.id }; drag = { ...ui.sel }; }
-  else if (el) { ui.line = el.dataset.l; ui.sel = null; }
+  else if (el && el.dataset.t !== 'line') { if (el.dataset.l) ui.line = el.dataset.l; ui.sel = { t: el.dataset.t, id: el.dataset.id }; drag = { ...ui.sel }; }
+  else if (el) { if (el.dataset.l) ui.line = el.dataset.l; ui.sel = null; }
   else ui.sel = null;
   renderAll();
 });
@@ -599,17 +620,17 @@ window.addEventListener('mousemove', e => {
   if (!drag) return;
   const m = curMap(), l = curLine(), p = pt(e);
   if (drag.t === 'st') {
-    const s = l.stations.find(s => s.id === drag.id); if (!s) return;
+    const s = findStation(drag.id); if (!s) return;
     const q = snapPt(p);
     ensureRoom(m, q.x, q.y);
     s.x = clamp(q.x, 0, mw(m)); s.y = clamp(q.y, 0, mh(m));
     // 乗り換え駅の場合はすべての路線の同じ駅を更新
-    if (s.hub) curMap().lines.forEach(x => {
+    if (s.hub) m.lines.forEach(x => {
       const st = x.stations.find(st => st.id === s.id);
       if (st) { st.x = s.x; st.y = s.y; }
     });
   } else if (drag.t === 'stname') {
-    const s = l.stations.find(s => s.id === drag.id); if (!s) return;
+    const s = findStation(drag.id); if (!s) return;
     const q = snapPt(p);
     s.nameX = q.x - drag.ox - s.x;
     s.nameY = q.y - drag.oy - s.y;
@@ -815,9 +836,8 @@ side.addEventListener('input', e => {
   else if (id === 'btext') { m.boxes.find(b => b.id === ui.sel.id).text = v; renderCanvas(); }
   else if (id === 'bfill') { m.boxes.find(b => b.id === ui.sel.id).fill = v; renderCanvas(); }
   else if (id === 'sshape') {
-    const s = l.stations.find(s => s.id === ui.sel.id);
-    s.shape = v;
-    renderCanvas();
+    const s = findStation(ui.sel.id);
+    if (s) { s.shape = v; renderCanvas(); }
   }
   else if (id === 'bsname') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { s.name = v; renderCanvas(); } }
   else if (id === 'bskind') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { s.kind = v; save(); renderAll(); } }
@@ -829,28 +849,36 @@ side.addEventListener('input', e => {
     const r = (m.roads || []).find(r => r.id === ui.sel.id);
     if (r) { r.width = +v; e.target.parentNode.firstChild.textContent = '幅(' + v + ')'; renderCanvas(); }
   }
-  else if (id === 'scolor') { l.stations.find(s => s.id === ui.sel.id).color = v; renderCanvas(); }
-  else if (id === 'snameRot') { l.stations.find(s => s.id === ui.sel.id).nameRot = +v; renderCanvas(); }
+  else if (id === 'scolor') { const s = findStation(ui.sel.id); if (s) { s.color = v; renderCanvas(); } }
+  else if (id === 'snameRot') { const s = findStation(ui.sel.id); if (s) { s.nameRot = +v; renderCanvas(); } }
   else if (id === 'shub') {
-    setHub(l.stations.find(s => s.id === ui.sel.id), e.target.checked);
+    setHub(findStation(ui.sel.id), e.target.checked);
     save(); renderAll();
   }
   else if (e.target.classList && e.target.classList.contains('shubline')) {
-    const s = l.stations.find(s => s.id === ui.sel.id), lid = e.target.dataset.lid;
-    const target = curMap().lines.find(x => x.id === lid);
+    const s = findStation(ui.sel.id), cm = curMap();
+    const target = cm.lines.find(x => x.id === e.target.dataset.lid);
     if (!s || !target) return;
     const has = target.stations.some(st => st.id === s.id);
-    if (e.target.checked && !has) target.stations.push(s);
-    else if (!e.target.checked && has) target.stations = target.stations.filter(st => st.id !== s.id);
+    if (e.target.checked && !has) {
+      target.stations.push(s);                                   // 路線に組み込む
+      cm.hubs = (cm.hubs || []).filter(x => x.id !== s.id);      // 路線外の置き場所からは外す
+    } else if (!e.target.checked && has) {
+      target.stations = target.stations.filter(st => st.id !== s.id);
+      // どの路線にも属さなくなったら、路線外の乗り換え駅として残す(消さない)
+      if (!cm.lines.some(x => x.stations.some(st => st.id === s.id))) (cm.hubs = cm.hubs || []).push(s);
+    }
     save(); renderAll();
   }
   else if (id === 'lwidth') { l.width = +v; e.target.parentNode.firstChild.textContent = '線の太さ(' + v + ')'; renderCanvas(); }
   else if (id === 'lcolor') { l.color = v; renderCanvas(); }
   else if (id === 'sname') {
-    const s = l.stations.find(s => s.id === ui.sel.id);
-    s.name = v;
-    if (s.hub) curMap().lines.forEach(x => { const st = x.stations.find(st => st.id === s.id); if (st) st.name = v; });
-    renderCanvas();
+    const s = findStation(ui.sel.id);
+    if (s) {
+      s.name = v;
+      if (s.hub) curMap().lines.forEach(x => { const st = x.stations.find(st => st.id === s.id); if (st) st.name = v; });
+      renderCanvas();
+    }
   }
   else if (id === 'cname') { l.crossings.find(c => c.id === ui.sel.id).name = v; renderCanvas(); }
   // 文字入力とスライダーの連続操作は、まとめて1回の履歴にする
@@ -859,11 +887,14 @@ side.addEventListener('input', e => {
 });
 side.addEventListener('change', e => {
   if (e.target.id === 'gap') {
-    const l = curLine(), i = l.stations.findIndex(s => s.id === ui.sel.id);
-    const a = l.stations[i - 1], b = l.stations[i], d = Math.max(0.5, parseFloat(e.target.value) || 1) * G;
-    const len = dist(a, b), ux = len ? (b.x - a.x) / len : 1, uy = len ? (b.y - a.y) / len : 0;
-    const nx = a.x + ux * d - b.x, ny = a.y + uy * d - b.y;
-    for (let j = i; j < l.stations.length; j++) { l.stations[j].x += nx; l.stations[j].y += ny; }
+    const l = curMap().lines.find(x => x.id === e.target.dataset.lid) || curLine();
+    const i = l.stations.findIndex(s => s.id === ui.sel.id);
+    if (i > 0) {
+      const a = l.stations[i - 1], b = l.stations[i], d = Math.max(0.5, parseFloat(e.target.value) || 1) * G;
+      const len = dist(a, b), ux = len ? (b.x - a.x) / len : 1, uy = len ? (b.y - a.y) / len : 0;
+      const nx = a.x + ux * d - b.x, ny = a.y + uy * d - b.y;
+      for (let j = i; j < l.stations.length; j++) { l.stations[j].x += nx; l.stations[j].y += ny; }
+    }
     save(); renderAll(); return;
   }
   if (e.target.id === 'bw' || e.target.id === 'bh') {
@@ -878,7 +909,7 @@ side.addEventListener('click', e => {
   const m = curMap(), li = e.target.closest('#lines li'), rli = e.target.closest('#roadlist li[data-rid]'), id = e.target.id;
   if (li) { ui.line = li.dataset.id; ui.sel = null; renderAll(); }
   else if (rli) { ui.sel = { t: 'road', id: rli.dataset.rid }; ui.tool = 'select'; renderAll(); }
-  else if (id === 'sreset') { delete curLine().stations.find(s => s.id === ui.sel.id).color; save(); renderAll(); }
+  else if (id === 'sreset') { const s = findStation(ui.sel.id); if (s) delete s.color; save(); renderAll(); }
   else if (id === 'bsreset') { const s = (m.stops || []).find(s => s.id === ui.sel.id); delete s.color; save(); renderAll(); }
   else if (id === 'droad') { m.roads = (m.roads || []).filter(r => r.id !== ui.sel.id); ui.sel = null; save(); renderAll(); }
   else if (id === 'newwin') window.open('index.html#' + encodeURIComponent(m.id));
@@ -889,8 +920,21 @@ side.addEventListener('click', e => {
     if (ui.drawing) finishRoad();
     ui.tool = 'road'; startRoadDrawing(); renderTools();
   } else if (id === 'dline') {
-    if (m.lines.length > 1) { m.lines = m.lines.filter(x => x.id !== ui.line); ui.line = m.lines[0].id; }
-    else { m.lines[0].stations = []; m.lines[0].crossings = []; }
+    if (m.lines.length > 1) {
+      const gone = m.lines.find(x => x.id === ui.line);
+      m.lines = m.lines.filter(x => x.id !== ui.line);
+      ui.line = m.lines[0].id;
+      // 消えた路線にしか無かった乗り換え駅は、路線外の乗り換え駅として残す(路線に依存させない)
+      (gone ? gone.stations : []).forEach(st => {
+        if (st.hub && !m.lines.some(x => x.stations.some(y => y.id === st.id)) &&
+            !(m.hubs || []).some(y => y.id === st.id)) (m.hubs = m.hubs || []).push(st);
+      });
+    } else {
+      const only = m.lines[0];
+      const hubs = only.stations.filter(st => st.hub);   // 最後の路線を空にするときも乗り換え駅は残す
+      only.stations = []; only.crossings = [];
+      hubs.forEach(st => { if (!(m.hubs || []).some(y => y.id === st.id)) (m.hubs = m.hubs || []).push(st); });
+    }
     ui.sel = null; save(); renderAll();
   } else if (id === 'dmap') {
     if (!confirm('「' + m.name + '」を削除しますか?')) return;
