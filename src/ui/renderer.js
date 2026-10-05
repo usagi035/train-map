@@ -1,17 +1,18 @@
-const COLORS = ['#E5352B','#1E7BC4','#2E9E5B','#F29B1F','#8A4FC9','#00A3A3'];
-const G = 20, W = 2400, H = 1600;   // 1マス = 20px / W,Hは初期サイズ
-const mw = m => m.w || W, mh = m => m.h || H;
-// 必要なところまでキャンバスを広げる(draw.ioのように右・下へ自動拡張)
-function ensureRoom(m, x, y) {
-  const pad = 400, step = 400;
-  const nx = Math.max(mw(m), Math.ceil((x + pad) / step) * step);
-  const ny = Math.max(mh(m), Math.ceil((y + pad) / step) * step);
-  if (nx !== mw(m)) m.w = nx;
-  if (ny !== mh(m)) m.h = ny;
-}
-const SHAPES = { circle: '○ 丸', double: '◎ 二重丸(特急停車駅など)', square: '□ 四角', diamond: '◇ ひし形' };
-const STOP_KINDS = { stop: 'バス停', terminal: '■ バスターミナル' };
-const STOP_COLOR = '#1f2d36';   // バス停の既定色(道路とは無関係)
+/* ===========================================================================
+   路線図エディタ 画面側の入口。
+   依存の方向は renderer → core の一方向(指示書 §13)。状態の変更は core 経由で行う。
+   =========================================================================== */
+import { S, COLORS, G, BG, SHAPES, STOP_KINDS, STOP_COLOR, OFF_LINK, mw, mh, clamp, lw, isDark,
+        newId, mkLine, mkRoad, mkBusStop, mkMap, mkStation, mkImage, ensureRoom,
+        replaceState, snapStr, findStationIn, linesOfIn, allStations,
+        linksIn, linkGroups, flattenLinks, pruneLinks } from '../core/model.js';
+import { dist, isLoop, segCount, segA, segB, segPt, project, keepCrossings } from '../core/geometry.js';
+import { migrate } from '../core/migration.js';
+import * as history from '../core/history.js';
+
+// HTMLエスケープ(画面表示のための都合なので core には置かない)
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
 const HINTS = {
   select:   '駅・バス停・道路をドラッグして移動 / 空白をドラッグして□で複数選択→Deleteで一括削除 / Deleteキーで削除 / Space+ドラッグで画面移動',
   station:  'クリックで駅を追加(線の上なら間に挿入) / 既存の駅をクリックすると追加せず、選択・移動へ自動で切り替わる',
@@ -22,71 +23,13 @@ const HINTS = {
   road:     'クリックで頂点を追加 / Enterで確定 / Escで中止 / 最初の頂点で閉じる',
   box:      'ドラッグで四角形(ラベル枠)を追加。クリックだけなら標準サイズ'
 };
-const uid = () => Math.random().toString(36).slice(2, 9);
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const BG = '#f4f6f5';
-const mkLine = (name, color) => ({ id: uid(), name, color, width: 8, loop: false, stations: [], crossings: [] });
-// 幹線道路(背景)。頂点(pts)の並びで形を表す独立要素
-const mkRoad = (name, color, pts) => ({ id: uid(), name, color, width: 16, pts: pts || [] });
-// バス停(独立要素)。路線・道路に属さない
-const mkBusStop = (name, x, y, kind) => ({ id: uid(), name, x, y, kind: kind || 'stop' });
-const mkMap = name => ({ id: uid(), name, bg: BG, lines: [mkLine('1号線', COLORS[0])], roads: [], stops: [], hubs: [] });
-const mkStation = (name, x, y) => ({ id: uid(), name, x, y, hub: false });
-// 画像要素(srcはdata URL)。zは 'back'(下敷き) / 'front'(前面)
-const mkImage = (src, x, y, w, h) => ({ id: uid(), src, x, y, w, h, opacity: 1, z: 'back' });
-const lw = l => l.width || 8;
-const isDark = hex => { const n = parseInt(hex.slice(1), 16); return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) < 120; };
 
-let S = null;
-try { S = JSON.parse(localStorage.getItem('railmaps')); } catch (e) {}
-if (!S || !Array.isArray(S.maps) || !S.maps.length) S = { maps: [mkMap('路線図 1')] };
-// 旧形式の移行: 道路を「路線のtype:road + 駅」で持っていたデータを、独立した道路・バス停へ変換する
-function migrate(data) {
-  data.maps.forEach(m => {
-    if (!Array.isArray(m.roads)) m.roads = [];
-    if (!Array.isArray(m.stops)) m.stops = [];
-    if (!Array.isArray(m.images)) m.images = [];   // インポートした画像要素
-    // 種類ごとの表示/非表示(レイヤー)。無ければ全部表示
-    if (!m.show || typeof m.show !== 'object') m.show = {};
-    ['road', 'stop', 'box', 'img'].forEach(k => { if (typeof m.show[k] !== 'boolean') m.show[k] = true; });
-    if (!Array.isArray(m.hubs)) m.hubs = [];   // 路線に属さない乗り換え駅の置き場所
-    if (!Array.isArray(m.lines) || !m.lines.length) { m.lines = [mkLine('1号線', COLORS[0])]; return; }
-    // 接続駅リストを「路線ごと」に。旧形式(配列)は、その駅が属する路線の分へまとめる
-    const all = [...m.lines.flatMap(l => l.stations), ...(m.hubs || [])];
-    const ids = new Set(all.map(x => x.id));
-    all.forEach(st => {
-      if (Array.isArray(st.links)) {
-        const home = m.lines.find(l => l.stations.some(x => x.id === st.id));
-        const arr = st.links.slice();
-        st.links = {}; st.links[home ? home.id : '-'] = arr;
-      } else if (!st.links || typeof st.links !== 'object') {
-        if (st.links !== undefined) delete st.links;
-      }
-      if (st.links && typeof st.links === 'object') {
-        Object.keys(st.links).forEach(k => {
-          if (Array.isArray(st.links[k])) st.links[k] = st.links[k].filter(x => ids.has(x));   // 存在しない駅への接続は捨てる
-          else delete st.links[k];
-        });
-      }
-    });
-    const oldRoads = m.lines.filter(l => l.type === 'road');
-    if (!oldRoads.length) return;
-    oldRoads.forEach(l => {
-      if (l.stations.length >= 2)
-        m.roads.push(mkRoad(l.name, l.color, l.stations.map(s => ({ x: s.x, y: s.y }))));
-      l.stations.forEach(s => {
-        const st = mkBusStop(s.name, s.x, s.y, s.shape === 'terminal' ? 'terminal' : 'stop');
-        st.color = s.color; st.nameX = s.nameX; st.nameY = s.nameY; st.nameRot = s.nameRot;
-        m.stops.push(st);
-      });
-    });
-    m.lines = m.lines.filter(l => l.type !== 'road');
-    if (!m.lines.length) m.lines.push(mkLine('1号線', COLORS[0]));
-  });
-  return data;
-}
-S = migrate(S);
+/* ---------- 状態の読み込み(localStorage の読み書きは画面側の責務) ---------- */
+let stored = null;
+try { stored = JSON.parse(localStorage.getItem('railmaps')); } catch (e) {}
+if (!stored || !Array.isArray(stored.maps) || !stored.maps.length) stored = { maps: [mkMap('路線図 1')] };
+replaceState(migrate(stored));
+
 let ui = { map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: 1, drawing: null, bulk: [], bulkRect: null, bulkMap: null };
 const hm = S.maps.find(m => m.id === decodeURIComponent(location.hash.slice(1)));   // 別ウィンドウで開いたときの路線図
 if (hm) { ui.map = hm.id; ui.line = hm.lines[0].id; ui.open = [hm.id]; }
@@ -96,74 +39,28 @@ else {
   if (om) { ui.map = om.id; ui.line = om.lines[0].id; } else ui.home = true;
 }
 
+/* ---------- いま開いている路線図・路線(画面側の現在位置) ---------- */
 const curMap  = () => S.maps.find(m => m.id === ui.map) || S.maps[0];
 const curLine = () => { const m = curMap(); return m.lines.find(l => l.id === ui.line) || m.lines[0]; };
 // 駅を探す(路線のstationsにも、路線に属さない乗り換え駅のm.hubsにも入っている)
-const findStation = id => {
-  const m = curMap();
-  return (m.hubs || []).find(s => s.id === id) || m.lines.flatMap(l => l.stations).find(s => s.id === id);
-};
+const findStation = id => findStationIn(curMap(), id);
 // その駅が属する路線(0〜複数。乗り換え駅は0本のこともある)
-const linesOf = id => curMap().lines.filter(l => l.stations.some(s => s.id === id));
-// すべての駅(複数路線に共有されている同じ駅は1つにまとめる)
-const allStations = m => {
-  const seen = new Map();
-  m.lines.forEach(l => l.stations.forEach(s => seen.set(s.id, s)));
-  (m.hubs || []).forEach(s => seen.set(s.id, s));
-  return [...seen.values()];
-};
-// 「接続する駅」は路線ごとに持つ。key = 路線ID、路線に属さないときは OFF_LINK
-const OFF_LINK = '-';
-const linksIn = (s, lid) => (s.links && Array.isArray(s.links[lid])) ? s.links[lid] : [];
-// 表示する接続グループ(属する路線ごと。路線外の接続があるときも1つ並べる)
-const linkGroups = (m, s) => {
-  const gs = [];
-  m.lines.forEach(l => { if (l.stations.some(x => x.id === s.id)) gs.push({ lid: l.id, name: l.name, color: l.color, ids: linksIn(s, l.id) }); });
-  const off = linksIn(s, OFF_LINK);
-  if (off.length || !gs.length) gs.push({ lid: OFF_LINK, name: '路線外', color: STOP_COLOR, ids: off });
-  return gs;
-};
-// どの路線にも属さなくなるとき、路線ごとの接続を「路線外」にまとめる
-const flattenLinks = s => {
-  const ids = [];
-  if (s.links && typeof s.links === 'object') {
-    Object.keys(s.links).forEach(k => (Array.isArray(s.links[k]) ? s.links[k] : []).forEach(id => { if (!ids.includes(id)) ids.push(id); }));
-  }
-  s.links = {}; s.links[OFF_LINK] = ids;
-};
-// 存在しなくなった駅を指している接続リストを掃除する(不正なIDを残さない)
-const pruneLinks = () => {
-  const m = curMap();
-  const each = st => {
-    if (!st.links || typeof st.links !== 'object') return;
-    Object.keys(st.links).forEach(k => { if (Array.isArray(st.links[k])) st.links[k] = st.links[k].filter(id => findStation(id)); });
-  };
-  m.lines.forEach(l => l.stations.forEach(each));
-  (m.hubs || []).forEach(each);
-};
+const linesOf = id => linesOfIn(curMap(), id);
 
 /* ---------- 履歴 (元に戻す / やり直す) ---------- */
-const snapStr = () => { try { return JSON.stringify(S); } catch (e) { return ''; } };
 const viewNow = () => ({ map: ui.map, line: ui.line });
-const undoStack = [], redoStack = [];
-let lastSnap = snapStr(), lastView = viewNow(), saveTimer = 0;
+let saveTimer = 0;
 let quotaWarned = false;   // 保存失敗の注意は1セッションに1回だけ表示
-// 表示中の路線図・路線を記録(元に戻したときにどの路線図を開くかに使う)
-const syncView = () => { lastView = viewNow(); };
 function updateUndoButtons() {
   const u = document.getElementById('undo'), r = document.getElementById('redo');
-  if (u) u.disabled = !undoStack.length;
-  if (r) r.disabled = !redoStack.length;
+  if (u) u.disabled = !history.canUndo();
+  if (r) r.disabled = !history.canRedo();
 }
 // 保存しつつ、変更前の状態を履歴に積む
 const save = () => {
   clearTimeout(saveTimer); saveTimer = 0;
   const now = snapStr();
-  if (now === lastSnap) return;         // 変化なしなら履歴に残さない
-  undoStack.push({ s: lastSnap, v: lastView });
-  if (undoStack.length > 50) undoStack.shift();
-  redoStack.length = 0;
-  lastSnap = now; lastView = viewNow();
+  if (!history.push(now, viewNow())) return;   // 変化なしなら履歴に残さない
   try { localStorage.setItem('railmaps', now); } catch (e) {
     // 保存できないと黙っていると消えてしまうので注意を出す(画像を取り込むと容量上限に当たりやすい)
     console.warn('自動保存に失敗しました:', e);
@@ -179,9 +76,9 @@ const deferSave = () => {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => { saveTimer = 0; save(); }, 600);
 };
+// 履歴のスナップを画面へ適用する(表示中の路線図・路線を、そのときのものへ合わせ直す)
 function applySnap(e) {
-  try { S = JSON.parse(e.s); } catch (err) { return; }
-  lastSnap = e.s; lastView = e.v;
+  try { replaceState(JSON.parse(e.s)); } catch (err) { return; }
   try { localStorage.setItem('railmaps', e.s); } catch (err) {}
   const v = e.v || {};
   ui.open = ui.open.filter(id => S.maps.some(m => m.id === id));
@@ -192,6 +89,7 @@ function applySnap(e) {
   ui.line = (v.line && m.lines.some(l => l.id === v.line)) ? v.line : m.lines[0].id;
   ui.sel = null; ui.drawing = null; clearBulk();   // 履歴を戻すと矩形選択も解除
   persistOpen();
+  updateUndoButtons();
   renderAll();
 }
 function undo() {
@@ -203,52 +101,15 @@ function undo() {
     } else cancelRoad();
     return;
   }
-  if (!undoStack.length) return;
-  redoStack.push({ s: lastSnap, v: lastView });
-  applySnap(undoStack.pop());
+  const e = history.undo();
+  if (e) applySnap(e);
 }
 function redo() {
-  if (ui.drawing || !redoStack.length) return;
-  undoStack.push({ s: lastSnap, v: lastView });
-  applySnap(redoStack.pop());
+  if (ui.drawing) return;
+  const e = history.redo();
+  if (e) applySnap(e);
 }
-
-/* ---------- geometry ---------- */
-const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-// 環状線(l.loop)は「最後の駅 → 最初の駅」の区間も1区間として数える
-const isLoop = l => !!l.loop && l.stations.length >= 2;
-const segCount = l => Math.max(0, isLoop(l) ? l.stations.length : l.stations.length - 1);
-const segA = (l, i) => l.stations[i];
-const segB = (l, i) => isLoop(l) ? l.stations[(i + 1) % l.stations.length] : l.stations[i + 1];
-const segPt = (l, seg, t) => {
-  const a = segA(l, seg), b = segB(l, seg);
-  if (!a) return { x: 0, y: 0 };
-  if (!b) return { x: a.x, y: a.y };
-  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-};
-function project(l, p) {
-  let best = null;
-  for (let i = 0; i < segCount(l); i++) {
-    const a = segA(l, i), b = segB(l, i);
-    if (!a || !b) continue;
-    const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
-    let t = len2 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2 : 0;
-    t = clamp(t, 0, 1);
-    const q = { x: a.x + dx * t, y: a.y + dy * t }, d = Math.hypot(p.x - q.x, p.y - q.y);
-    if (!best || d < best.d) best = { seg: i, t, d, x: q.x, y: q.y };
-  }
-  return best;
-}
-// 駅の追加・削除をしても、踏切が元の位置に残るよう付け直す
-// ps を渡すと、それを位置の基準にする(環状線のON/OFFなど区間の数が変わるとき用)
-function keepCrossings(l, fn, ps) {
-  if (!ps) ps = l.crossings.map(c => segPt(l, c.seg, c.t));
-  fn();
-  l.crossings = l.crossings.map((c, i) => {
-    const r = project(l, ps[i]);
-    return r ? Object.assign(c, { seg: r.seg, t: r.t }) : null;
-  }).filter(Boolean);
-}
+history.init(snapStr(), viewNow());
 
 /* ---------- マウスの□(矩形)で複数選択 ---------- */
 const BAND_COLOR = '#2f7d64';
@@ -882,7 +743,7 @@ function addCrossing(p) {
     alert('「' + best.l.name + '」は' + (best.l.lock ? 'ロック中' : '非表示') + 'です。\n右パネルの ' + (best.l.lock ? '🔒 を解除' : '👁 で表示に戻す') + 'してから追加してください。');
     return;
   }
-  const q = snapCx(best.l, best.r), c = { id: uid(), seg: q.seg, t: q.t, name: '' };
+  const q = snapCx(best.l, best.r), c = { id: newId(), seg: q.seg, t: q.t, name: '' };
   best.l.crossings.push(c);
   ui.line = best.l.id; ui.sel = { t: 'cx', id: c.id };
   afterAdd(); save(); renderAll();
@@ -900,7 +761,7 @@ function delOne(sel) {
       const home = m.lines.find(x => x.stations.some(st => st.id === id)) || curLine();
       keepCrossings(home, () => { home.stations = home.stations.filter(st => st.id !== id); });
     }
-    pruneLinks();   // この駅を指している接続リストも掃除する
+    pruneLinks(m);   // この駅を指している接続リストも掃除する
   }
   else if (sel.t === 'stop') m.stops = (m.stops || []).filter(s => s.id !== id);
   else if (sel.t === 'road') m.roads = (m.roads || []).filter(r => r.id !== id);
@@ -1010,7 +871,7 @@ cv.addEventListener('mousedown', e => {
   if (ui.tool === 'terminal') return addBusStop(p, 'terminal');
   if (ui.tool === 'road') { if (!ui.drawing) ui.drawing = { pts: [], hover: null }; addRoadPoint(p); return; }
   if (ui.tool === 'box') {
-    const q = snapPt(p), b = { id: uid(), x: q.x, y: q.y, w: G * 6, h: G * 3, text: 'ラベル', fill: '#ffffff' };
+    const q = snapPt(p), b = { id: newId(), x: q.x, y: q.y, w: G * 6, h: G * 3, text: 'ラベル', fill: '#ffffff' };
     (m.boxes = m.boxes || []).push(b);
     m.show = m.show || {}; m.show.box = true;   // 非表示でも置いたら表示に戻す
     ui.sel = { t: 'bx', id: b.id }; drag = { t: 'bxnew', id: b.id, a: q, p0: p };
@@ -1236,7 +1097,7 @@ document.getElementById('file').addEventListener('change', e => {
     try {
       const d = JSON.parse(r.result);
       if (!Array.isArray(d.maps) || !d.maps.length || !d.maps.every(m => Array.isArray(m.lines) && m.lines.length)) throw 0;
-      S = migrate(d);
+      replaceState(migrate(d));
       ui = { map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: ui.zoom, drawing: null }; persistOpen();
       save(); renderAll();
     } catch (err) { alert('読み込めませんでした。書き出したJSONファイルを選んでください。'); }
@@ -1328,7 +1189,7 @@ function exportImage() {
 function openMap(id) {
   if (!ui.open.includes(id)) ui.open.push(id);
   ui.map = id; ui.line = curMap().lines[0].id; ui.sel = null; ui.home = false;
-  syncView(); persistOpen(); renderAll();
+  history.syncView(viewNow()); persistOpen(); renderAll();
 }
 function closeTab(id) {
   const i = ui.open.indexOf(id); if (i < 0) return;
@@ -1337,7 +1198,7 @@ function closeTab(id) {
     const n = ui.open[Math.min(i, ui.open.length - 1)];
     if (n) { ui.map = n; ui.line = curMap().lines[0].id; ui.sel = null; } else ui.home = true;
   }
-  syncView(); persistOpen(); renderAll();
+  history.syncView(viewNow()); persistOpen(); renderAll();
 }
 function newMap() { const m = mkMap('路線図 ' + (S.maps.length + 1)); S.maps.push(m); save(); openMap(m.id); }
 function deleteMap(id) {
@@ -1348,7 +1209,7 @@ function deleteMap(id) {
   if (ui.map === id) {
     if (ui.open.length) { ui.map = ui.open[0]; ui.line = curMap().lines[0].id; ui.sel = null; } else ui.home = true;
   }
-  syncView(); persistOpen(); renderAll();
+  history.syncView(viewNow()); persistOpen(); renderAll();
 }
 // Ctrl+W から呼ばれる。true=路線図を閉じた(アプリは閉じない) / false=開いている路線図がないのでウィンドウを閉じてよい
 window.__closeTab = () => {
@@ -1580,7 +1441,7 @@ side.addEventListener('click', e => {
     // 路線に属さなくなった乗り換え駅の接続は「路線外」へ、消えた路線ごとの接続は捨てる
     (m.hubs || []).forEach(st => { if (!m.lines.some(l => l.stations.some(x => x.id === st.id))) flattenLinks(st); });
     if (deadId) allStations(m).forEach(st => { if (st.links && st.links[deadId]) delete st.links[deadId]; });
-    pruneLinks();   // 路線ごと消した駅への接続を外す
+    pruneLinks(m);   // 路線ごと消した駅への接続を外す
     ui.sel = null; save(); renderAll();
   } else if (id === 'dmap') {
     if (!confirm('「' + m.name + '」を削除しますか?')) return;
@@ -1690,10 +1551,10 @@ window.addEventListener('storage', e => {
   try {
     const d = JSON.parse(e.newValue);
     if (!Array.isArray(d.maps) || !d.maps.length) return;
-    S = d;
+    replaceState(d);
     // 別ウィンドウの変更を取り込んだ時点で履歴をリセット
-    lastSnap = snapStr(); lastView = viewNow();
-    undoStack.length = 0; redoStack.length = 0; updateUndoButtons();
+    history.reset(snapStr(), viewNow());
+    updateUndoButtons();
     ui.open = ui.open.filter(id => S.maps.some(m => m.id === id));
     if (!S.maps.some(m => m.id === ui.map)) {
       if (ui.open.length) { ui.map = ui.open[0]; ui.line = curMap().lines[0].id; } else ui.home = true;
