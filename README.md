@@ -199,14 +199,25 @@ PCの入れ替えやアプリの削除に備えて、大切な路線図は「書
 ```
 .
 ├── package.json   # 依存関係・ビルド設定
-├── main.js        # Electronのメインプロセス(ウィンドウ管理・Ctrl+Wの処理)
-├── index.html     # 画面の構造とスタイル(HTML / CSS)
-├── renderer.js    # 編集ロジック(画面側のJavaScript)
+├── README.md      # このファイル(機能・操作説明)
+├── src/           # アプリ本体
+│   ├── main/main.js     # Electronのメインプロセス(ウィンドウ管理・Ctrl+Wの処理)
+│   └── ui/
+│       ├── index.html   # 画面の構造とスタイル(HTML / CSS)
+│       └── renderer.js  # 編集ロジック(画面側のJavaScript)
+├── docs/                # 仕様書・コード説明・AI作業ルール
+│   ├── code_Desc.md
+│   ├── AI-rule.md
+│   ├── editor-architecture-spec.md
+│   └── signaling-server-spec.md
 ├── build/
 │   └── uninstaller.nsi       # アンインストーラーのNSISスクリプト
 └── scripts/
-    └── make-uninstaller.js   # dist にアンインストーラーを同梱する処理
+    ├── make-uninstaller.js   # dist にアンインストーラーを同梱する処理
+    └── up.bat                # npm start の一時起動用(追跡外)
 ```
+
+ルート直下に置くファイルは `package.json` と `README.md` だけになるようにしています(ビルド設定は `package.json`、補助スクリプトは `scripts/`、ドキュメントは `docs/`、アプリは `src/`)。
 
 ## ライセンス
 
