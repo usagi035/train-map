@@ -14,6 +14,7 @@
 | 7 | Snapshot の提供 Peer / 送信中の Operation の扱い | 4 | 保留 |
 | 8 | Operation 全体の順序付け・競合解決 | 5 | 保留 |
 | 9 | 再接続・オンライン時の Undo | 7 | 保留 |
+| 10 | 画面側の分割方針(Stage C) | 1 | **決定(実装・検証済み)** |
 
 ---
 
@@ -89,3 +90,23 @@
 既に同一 localStorage 経由のリアルタイム同期が存在する。オンライン機能と併存させるか、オンライン中は無効にするかを Phase 3 で決める。
 
 ## 7〜9 → 仕様書12章のとおり、該当 Phase の直前に決定する。
+
+## 10. 画面側の分割方針(Stage C)→ **決定(2026-10-05 実装・検証済み)**
+
+`docs/core-split-instruction.md` §8〜§12 に沿って `src/ui/renderer.js` を画面モジュールへ分割した。
+
+- **構成**: `src/renderer/` に `ui-state.js`(共通状態・共通操作・`renderAll`)、`canvas.js`、
+  `side-panel.js`、`left-panel.js`、`tabs.js`、`renderer.js`(入口・入力配線)。旧 `src/ui/renderer.js` は削除。
+- **import の向きは `ui-state → 各画面モジュール` の一方向だけ**(相互 import で循環しない)。
+  `renderer.js` は入口として他から import されない。core は画面のどのモジュールからも import できてよい
+  (`renderer → core` の一方向は維持、core は DOM/Electron 非依存のまま)。
+- **描画の登録**: `renderAll()` は `ui-state.js` に置き、各モジュールの描画関数は `renderer.js` が
+  `setRender({tabs, home, canvas, side, left})` で**最初の `renderAll()` より前**に登録する。
+  1つだけ描き直す場合は `renderPart(name)`(入力中の欄を作り直さないため)。
+- **画面側の小さな共有状態**: 「画像を変更」の差し替え対象は 2つのモジュールで使うため `ui-state.js` の
+  `imgPick`(可変オブジェクト)に集約。ESM の import は束縛に代入できないため、可変のものは
+  `ui` → `replaceUi(next)`、状態全体 → `replaceState(next)` のように**代入ではなく関数**で渡す。
+- **core の生成場所**: `ui-state.js` が生成し、画面側全モジュールがそこから import する
+  (`core` を先に作らないと起動時の `importDocument` が動かないため)。
+- **検証**: `node --check`(全モジュール)と core スモーク全 ok / ブラウザ回帰 64 項目 + 追加 16 項目合格・
+  コンソールエラー 0 件 / Electron(`file://`)で起動・編集・再読込・コンソール問題 0 件。

@@ -1,6 +1,6 @@
 # 路線図エディタ コード説明 (code_Desc.md)
 
-対象: railway-map-editor v1.0.0 / 最終更新 2026-10-04
+対象: railway-map-editor v1.0.0 / 最終更新 2026-10-05
 **行番号は記載時点の目安です(コードを編集するとずれます)。関数名・イベント名で検索してください。**
 
 ---
@@ -16,10 +16,13 @@ npm start
        ├─ createWindow() … BrowserWindow 生成 → src/ui/index.html を読み込む
        └─ before-input-event … Ctrl+W を「路線図タブを閉じる」に割り当て
             └─ src/ui/index.html (画面構造 + CSS)
-                 └─ src/ui/renderer.js (レンダラープロセス・全ロジック)
-                      ├─ 起動時に localStorage('railmaps') を読込 → migrate() → renderAll()
-                      ├─ 編集のたびに save() … 履歴に積み + localStorage へ書く
-                      └─ renderAll() = renderTabs / renderTools / renderCanvas / renderSide / renderLeft
+             └─ <script type="module" src="../renderer/renderer.js"> … 画面側の入口
+                  ├─ renderer/ui-state.js … 共通状態・共通操作・renderAll(各画面モジュールはここからのみ import)
+                  ├─ renderer/{canvas,side-panel,left-panel,tabs}.js … 描画と各画面の操作
+                  ├─ core/{model,geometry,migration,history,operations}.js … 画面に依存しない操作(createCore)
+                  ├─ 起動時: localStorage('railmaps') 読込 → migrate() → importDocument → renderAll()
+                  ├─ 編集のたびに save() … 履歴に積み + localStorage へ書く
+                  └─ renderAll() = renderTabs / renderTools / renderCanvas / renderSide / renderLeft
 ```
 
 ### localStorage に保存するキー
@@ -41,7 +44,17 @@ npm start
 | --- | --- |
 | `src/main/main.js` | Electron メインプロセス。ウィンドウ生成・Ctrl+W の割り当て・単一インスタンス制御 |
 | `src/ui/index.html` | 画面の DOM 構造と**すべての CSS**(外部スタイル無し)。CSP 指定あり |
-| `src/ui/renderer.js` | アプリ本体(約1700行)。データ、履歴、描画、編集、イベントを全部持つ |
+| `src/core/model.js` | 状態 `S` の読み書き・ID(`newId`)・定数(COLORS/G/SHAPES/…)・各オブジェクト生成・接続の掃除 |
+| `src/core/geometry.js` | 距離・区間・環状線の計算(`dist` / `project` / `keepCrossings` など) |
+| `src/core/migration.js` | 旧形式のデータを新形式へ変換する `migrate()` |
+| `src/core/history.js` | Undo/Redo のスナップ管理(`init` / `push` / `undo` / `redo`) |
+| `src/core/operations.js` | 追加・削除・移動などの操作と `createCore()`。**画面側が core に触れる唯一の入口** |
+| `src/renderer/ui-state.js` | 画面側の共通状態・共通操作(`ui` / `save` / `renderAll` / □選択 / レイヤー判定 / 道路描画 / 削除)。**他の画面モジュールはここからのみ import する** |
+| `src/renderer/canvas.js` | SVG の描画(`renderCanvas`)とズーム・スクロール(`pt` / `applyZoom` / `setZoom` / `centerStation`) |
+| `src/renderer/side-panel.js` | 右パネルの描画(`renderSide` / `sec`)と `#side` のイベント |
+| `src/renderer/left-panel.js` | 左パネルの描画(`renderLeft` / `stationGlyph`)と駅の並べ替え |
+| `src/renderer/tabs.js` | タブと一覧(ホーム)の描画・操作(`renderTabs` / `renderHome` / `openMap` / `closeTab` / `newMap` / `deleteMap`) |
+| `src/renderer/renderer.js` | 画面側の入口(約460行)。初期化、マウス・キー・ファイル入力、`storage` 同期、各モジュールの描画関数の登録 |
 | `package.json` | npm スクリプト(start / dist / uninstaller)と electron-builder 設定 |
 | `scripts/make-uninstaller.js` | `dist/` に「アンインストーラ .exe」を同梱するためのビルド補助 |
 | `build/uninstaller.nsi` | NSIS スクリプト(アンインストーラ生成用。上記が使用) |
@@ -125,7 +138,7 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
   <aside id="side">          … 右パネル: 設定(6グループ)                  ← renderSide()
   <div id="home">            … 路線図の一覧画面                          ← renderHome()
 <div id="hint">              … ツールごとの操作ヒント(固定表示)
-<script src="renderer.js">
+<script type="module" src="../renderer/renderer.js">
 ```
 
 ### CSS のグループ(src/ui/index.html 内 `<style>`)
@@ -147,9 +160,39 @@ CSP: `default-src 'self'`(script/style の inline と `data:` 画像のみ許可
 
 ---
 
-## 5. src/ui/renderer.js(アプリ本体)
+## 5. 画面側の構成(src/renderer/)
 
-ファイル末尾の `renderAll()`(1行目)が起動時の入口。
+`src/renderer/renderer.js` が画面側の入口で、ファイル末尾の `renderAll()` が起動時の入口。
+import は **ui-state → 各画面モジュール** の一方向だけにし(相互 import で循環しない)、
+描画関数は `renderer.js` が `setRender({tabs, home, canvas, side, left})` で**最初の `renderAll()` より前に**登録する。
+1つだけ描き直すときは `renderPart(name)` を使う。
+
+| モジュール | 役割 |
+| --- | --- |
+| `ui-state.js` | 画面側の共通状態と共通操作(`core` の生成、`ui`、`save`、`renderAll`、□選択、レイヤー判定、道路描画、削除) |
+| `canvas.js` | SVG 描画とズーム・スクロール |
+| `side-panel.js` | 右パネルの描画と `#side` のイベント |
+| `left-panel.js` | 左パネルの描画と駅の並べ替え |
+| `tabs.js` | タブ・一覧(ホーム)の描画と操作 |
+| `renderer.js` | 初期化・マウス/キー/ファイル入力・`storage` 同期・描画関数の登録 |
+
+以下の5.1〜5.14 は**関数単位の説明**(行番号は分割前)。各節の置き場所は次のとおり。
+
+| 節 | 置き場所 |
+| --- | --- |
+| 5.1 定数・ユーティリティ | `core/model.js`。`HINTS` / `esc` は `ui-state.js` |
+| 5.2 初期化と旧形式の移行 | `ui-state.js`(`migrate` は `core/migration.js`) |
+| 5.3 アクセサ | `core/model.js` + `ui-state.js`(`curMap` / `curLine` / `findStation` / `linesOf`) |
+| 5.4 履歴と保存 | `save` / `deferSave` / `viewNow` は `ui-state.js`、`applySnap` / `undo` / `redo` は `renderer.js`、`snapStr` は `core/model.js` |
+| 5.5 幾何 | `core/geometry.js` |
+| 5.6 □選択・5.7 レイヤー判定 | `ui-state.js` |
+| 5.8 描画 | `tabs.js` / `ui-state.js`(`renderTools`・`renderAll`) / `canvas.js` / `side-panel.js` / `left-panel.js` |
+| 5.9 編集操作 | 本体は `core/operations.js`。`del` と道路描画は `ui-state.js`、追加系は `renderer.js`、`setHub` は `side-panel.js` |
+| 5.10 座標・ズーム | `snapPt` / `afterAdd` は `ui-state.js`、`pt` / `applyZoom` / `setZoom` は `canvas.js` |
+| 5.11 イベント | 全体(マウス・キー・ツールバー・ファイル)は `renderer.js`、`#side` / `#left` / `#tabs`・`#home` は各モジュール |
+| 5.12 画像のインポートと書き出し | `renderer.js` |
+| 5.13 路線図タブの管理 | `tabs.js` |
+| 5.14 別ウィンドウとの同期 | `renderer.js` |
 
 ### 5.1 定数・ユーティリティ(L1〜40)
 
@@ -161,7 +204,7 @@ CSP: `default-src 'self'`(script/style の inline と `data:` 画像のみ許可
 | `ensureRoom(m, x, y)` | 必要な分だけキャンバスを **400px 単位で右・下に自動拡張**(draw.io方式) |
 | `SHAPES`, `STOP_KINDS`, `STOP_COLOR` | 駅の形・バス停の種別のラベル、バス停既定色 |
 | `HINTS` | ツールごとのヒント文(select/station/hub/crossing/busstop/terminal/road/box) |
-| `uid()` | 7文字のID生成 |
+| `newId()` | ID生成(`crypto.randomUUID`。旧 `uid()` から変更) |
 | `clamp(v,a,b)`, `esc(s)` | 数値クランプ / HTMLエスケープ |
 | `mkLine/mkRoad/mkBusStop/mkMap/mkStation/mkImage` | 各オブジェクトの生成(既定値入り) |
 | `lw(l)` | 路線の太さ(`width \|\| 8`) |

@@ -201,12 +201,27 @@ PCの入れ替えやアプリの削除に備えて、大切な路線図は「書
 ├── package.json   # 依存関係・ビルド設定
 ├── README.md      # このファイル(機能・操作説明)
 ├── src/           # アプリ本体
-│   ├── main/main.js     # Electronのメインプロセス(ウィンドウ管理・Ctrl+Wの処理)
+│   ├── main/main.js      # Electronのメインプロセス(ウィンドウ管理・Ctrl+Wの処理)
+│   ├── core/             # 画面に依存しない処理
+│   │   ├── model.js        # データの形とID・定数・接続の掃除
+│   │   ├── geometry.js     # 距離や線分・環状線の計算
+│   │   ├── migration.js    # 旧形式のデータを新形式へ変換
+│   │   ├── history.js      # 元に戻す / やり直す(履歴)
+│   │   └── operations.js   # 追加・削除・移動などの操作(createCore)
+│   ├── renderer/          # 画面側のJavaScript(ESM)
+│   │   ├── ui-state.js     # 共通状態・共通操作・描画関数の登録場所
+│   │   ├── canvas.js       # キャンバスの描画とズーム・スクロール
+│   │   ├── side-panel.js   # 右パネル
+│   │   ├── left-panel.js   # 左パネル(駅リスト)
+│   │   ├── tabs.js         # タブと一覧(ホーム)
+│   │   └── renderer.js     # 起動と入力(マウス・キー・ファイル)の受け付け
 │   └── ui/
-│       ├── index.html   # 画面の構造とスタイル(HTML / CSS)
-│       └── renderer.js  # 編集ロジック(画面側のJavaScript)
-├── docs/                # 仕様書・コード説明・AI作業ルール
+│       └── index.html      # 画面の構造とスタイル(HTML / CSS)
+├── docs/                # 仕様書・コード説明・作業ルール
 │   ├── code_Desc.md
+│   ├── core-split-instruction.md   # 画面分割の実装指示書
+│   ├── decisions.md                # 判断ポイントの記録
+│   ├── current-architecture.md     # Phase 0 の現状調査レポート
 │   ├── AI-rule.md
 │   ├── editor-architecture-spec.md
 │   └── signaling-server-spec.md

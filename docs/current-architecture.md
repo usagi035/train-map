@@ -6,7 +6,7 @@
 **この段階ではソースコードを変更していない**(本ファイルと `docs/` の作成のみ)。
 行番号は調査時点(`fe0cb6f` + 未コミットの文書)の `renderer.js` / `main.js` のもの。
 
-> **備考(調査後)**: 2026-10-05、ルート直下の整理を行った。`main.js` → `src/main/main.js`、`index.html` → `src/ui/index.html`、`renderer.js` → `src/ui/renderer.js`、ドキュメント類 → `docs/` へ移動している。**本書は Phase 0 調査時点の記録**なので下の構成は移動前のままにしている。
+> **備考(調査後)**: 2026-10-05、ルート直下の整理を行った。`main.js` → `src/main/main.js`、`index.html` → `src/ui/index.html`、`renderer.js` → `src/ui/renderer.js`、ドキュメント類 → `docs/` へ移動している。**本書は Phase 0 調査時点の記録**なので下の構成は移動前のままにしている。2026-10-05 のうち Stage A〜C(`src/core/` と `src/renderer/` への分割)以後の構成は `docs/code_Desc.md` を参照。
 
 ---
 
