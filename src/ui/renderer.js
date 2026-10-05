@@ -2,13 +2,14 @@
    路線図エディタ 画面側の入口。
    依存の方向は renderer → core の一方向(指示書 §13)。状態の変更は core 経由で行う。
    =========================================================================== */
-import { S, COLORS, G, BG, SHAPES, STOP_KINDS, STOP_COLOR, OFF_LINK, mw, mh, clamp, lw, isDark,
-        newId, mkLine, mkRoad, mkBusStop, mkMap, mkStation, mkImage, ensureRoom,
-        replaceState, snapStr, findStationIn, linesOfIn, allStations,
-        linksIn, linkGroups, flattenLinks, pruneLinks } from '../core/model.js';
-import { dist, isLoop, segCount, segA, segB, segPt, project, keepCrossings } from '../core/geometry.js';
-import { migrate } from '../core/migration.js';
-import * as history from '../core/history.js';
+import { S, G, BG, SHAPES, STOP_KINDS, STOP_COLOR, OFF_LINK, mw, mh, clamp, lw, isDark,
+        mkMap, findStationIn, linesOfIn, allStations,
+        linksIn, linkGroups } from '../core/model.js';
+import { dist, isLoop, segCount, segA, segB, segPt } from '../core/geometry.js';
+import { createCore } from '../core/operations.js';
+
+// 状態の読み書き・編集操作はすべて core 経由(画面が直接書き換えない。指示書 §6/§7)
+const core = createCore();
 
 // HTMLエスケープ(画面表示のための都合なので core には置かない)
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -28,7 +29,7 @@ const HINTS = {
 let stored = null;
 try { stored = JSON.parse(localStorage.getItem('railmaps')); } catch (e) {}
 if (!stored || !Array.isArray(stored.maps) || !stored.maps.length) stored = { maps: [mkMap('路線図 1')] };
-replaceState(migrate(stored));
+core.importDocument(stored);
 
 let ui = { map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: 1, drawing: null, bulk: [], bulkRect: null, bulkMap: null };
 const hm = S.maps.find(m => m.id === decodeURIComponent(location.hash.slice(1)));   // 別ウィンドウで開いたときの路線図
@@ -53,14 +54,14 @@ let saveTimer = 0;
 let quotaWarned = false;   // 保存失敗の注意は1セッションに1回だけ表示
 function updateUndoButtons() {
   const u = document.getElementById('undo'), r = document.getElementById('redo');
-  if (u) u.disabled = !history.canUndo();
-  if (r) r.disabled = !history.canRedo();
+  if (u) u.disabled = !core.canUndo();
+  if (r) r.disabled = !core.canRedo();
 }
 // 保存しつつ、変更前の状態を履歴に積む
 const save = () => {
   clearTimeout(saveTimer); saveTimer = 0;
-  const now = snapStr();
-  if (!history.push(now, viewNow())) return;   // 変化なしなら履歴に残さない
+  const now = core.commit(viewNow());   // 変化が無ければ null(そのときは保存もしない)
+  if (!now) return;
   try { localStorage.setItem('railmaps', now); } catch (e) {
     // 保存できないと黙っていると消えてしまうので注意を出す(画像を取り込むと容量上限に当たりやすい)
     console.warn('自動保存に失敗しました:', e);
@@ -78,7 +79,7 @@ const deferSave = () => {
 };
 // 履歴のスナップを画面へ適用する(表示中の路線図・路線を、そのときのものへ合わせ直す)
 function applySnap(e) {
-  try { replaceState(JSON.parse(e.s)); } catch (err) { return; }
+  // 状態そのものは core.undo() / core.redo() が入れ替え済み
   try { localStorage.setItem('railmaps', e.s); } catch (err) {}
   const v = e.v || {};
   ui.open = ui.open.filter(id => S.maps.some(m => m.id === id));
@@ -101,15 +102,15 @@ function undo() {
     } else cancelRoad();
     return;
   }
-  const e = history.undo();
+  const e = core.undo();
   if (e) applySnap(e);
 }
 function redo() {
   if (ui.drawing) return;
-  const e = history.redo();
+  const e = core.redo();
   if (e) applySnap(e);
 }
-history.init(snapStr(), viewNow());
+core.resetHistory(viewNow());
 
 /* ---------- マウスの□(矩形)で複数選択 ---------- */
 const BAND_COLOR = '#2f7d64';
@@ -613,12 +614,9 @@ function renderLeft() {
     '<p class="note">上から順に線を引く経路です。↑↓ボタンかドラッグで並べ替えると線の形が変わります(踏切は位置を保ちます)。行をクリックするとその駅を選択して表示を移動します</p>' +
     (l.stations.length ? `<ul class="linklist" id="stlist">${rows}</ul>` : '<p class="note">まだ駅がありません</p>');
 }
-// 駅の並べ替え。踏切が指す区間を保てるよう keepCrossings で囲む
+// 駅の並べ替え(踏切が指す区間を保てるよう core 側で keepCrossings してから入れ替える)
 function moveStation(l, from, to) {
-  keepCrossings(l, () => {
-    const s = l.stations.splice(from, 1)[0];
-    l.stations.splice(to, 0, s);
-  });
+  core.moveStationInLine(l, from, to);
   save(); renderAll();
 }
 function centerStation(s) {
@@ -639,75 +637,38 @@ function renderAll() {
   renderTools(); renderCanvas(); renderSide(); renderLeft();
 }
 
-/* ---------- editing ---------- */
+/* ---------- editing: 操作そのものは core へ。ここは選択・履歴・再描画の受け持ち ---------- */
 // 乗り換え(複数路線に共有)のON/OFF。OFFのときは通常の駅に戻るので、必ずどこかの路線に乗せる
-function setHub(st, on) {
-  if (!st) return;
-  const m = curMap();
-  if (on) { st.hub = true; return; }
-  st.hub = false;
-  const home = m.lines.find(x => x.id === ui.line) || m.lines[0];
-  if (home && !home.stations.some(y => y.id === st.id)) home.stations.push(st);
-  m.lines.forEach(x => { if (x.id !== home.id) x.stations = x.stations.filter(y => y.id !== st.id); });
-  m.hubs = (m.hubs || []).filter(y => y.id !== st.id);   // 路線外の置き場所からは外す
-}
+function setHub(st, on) { core.setHub(curMap(), st, on, ui.line); }
 function addStation(p) {
   if (lineEditBlocked()) return;   // ロック中・非表示の路線には追加できない
-  const l = curLine(), m = curMap();
-  const r = project(l, p);
-  ensureRoom(m, p.x, p.y); if (r) ensureRoom(m, r.x, r.y);
-  const q = { x: clamp(Math.round(p.x / G) * G, 0, mw(m)), y: clamp(Math.round(p.y / G) * G, 0, mh(m)) };
-  const st = mkStation('駅' + (l.stations.length + 1), q.x, q.y);
-  keepCrossings(l, () => {
-    if (!document.getElementById('snap').checked) { st.x = clamp(Math.round(p.x), 0, mw(m)); st.y = clamp(Math.round(p.y), 0, mh(m)); }
-    if (r && r.d < 14) { st.x = Math.round(r.x); st.y = Math.round(r.y); l.stations.splice(r.seg + 1, 0, st); }
-    else l.stations.push(st);
-  });
+  const st = core.addStation({ map: curMap(), line: curLine(), p, snap: snapOn() });
   ui.sel = { t: 'st', id: st.id };
   afterAdd(); save(); renderAll();
 }
 function addHubStation(p) {
-  const m = curMap();
-  ensureRoom(m, p.x, p.y);
-  const q = { x: clamp(Math.round(p.x / G) * G, 0, mw(m)), y: clamp(Math.round(p.y / G) * G, 0, mh(m)) };
-  const n = m.lines.reduce((n, x) => n + x.stations.length, 0) + (m.hubs || []).length + 1;
-  const st = mkStation('乗換駅' + n, q.x, q.y);
-  st.hub = true;
   // どの路線にも属さない独立した乗り換え駅として置く(右パネルのチェックリストで路線に組み込める)
-  (m.hubs = m.hubs || []).push(st);
+  const st = core.addHubStation({ map: curMap(), p, snap: snapOn() });
   ui.sel = { t: 'st', id: st.id };
   ui.tool = 'select';
   save(); renderAll();
 }
 /* --- バス停(独立要素) --- */
 function addBusStop(p, kind) {
-  const m = curMap();
-  m.show = m.show || {}; m.show.stop = true;   // 非表示でも置いたら表示に戻す
-  ensureRoom(m, p.x, p.y);
-  const q = { x: clamp(Math.round(p.x / G) * G, 0, mw(m)), y: clamp(Math.round(p.y / G) * G, 0, mh(m)) };
-  m.stops = m.stops || [];
-  const n = m.stops.filter(s => (s.kind || 'stop') === kind).length + 1;
-  const st = mkBusStop((kind === 'terminal' ? 'バスターミナル' : 'バス停') + n, q.x, q.y, kind);
-  m.stops.push(st);
+  const st = core.addBusStop({ map: curMap(), p, kind, snap: snapOn() });
   ui.sel = { t: 'stop', id: st.id };
   afterAdd(); save(); renderAll();
 }
 /* --- 幹線道路(独立要素・頂点をクリックして引く) --- */
 function startRoadDrawing() {
-  const m = curMap();
-  m.show = m.show || {}; m.show.road = true;   // 非表示でも引くときは表示に戻す
+  core.setShow(curMap(), 'road', true);   // 非表示でも引くときは表示に戻す
   ui.drawing = { pts: [], hover: null };
   save(); renderAll();
 }
 function finishRoad() {
   const d = ui.drawing; ui.drawing = null;
   if (d && d.pts.length >= 2) {
-    const m = curMap();
-    m.roads = m.roads || [];
-    const used = new Set([...m.roads.map(r => r.color), ...m.lines.map(x => x.color)]);
-    const color = COLORS.find(c => !used.has(c)) || COLORS[m.roads.length % COLORS.length];
-    const r = mkRoad('幹線道路 ' + (m.roads.length + 1), color, d.pts);
-    m.roads.push(r);
+    const r = core.addRoad(curMap(), d.pts);
     ui.sel = { t: 'road', id: r.id };
     ui.tool = 'select';
     save();
@@ -719,8 +680,8 @@ function finishRoad() {
 function cancelRoad() { ui.drawing = null; ui.tool = 'select'; renderAll(); }
 function addRoadPoint(p) {
   const m = curMap();
-  ensureRoom(m, p.x, p.y);
-  const snap = document.getElementById('snap').checked;
+  core.ensureRoom(m, p.x, p.y);
+  const snap = snapOn();
   const q = { x: clamp(snap ? Math.round(p.x / G) * G : Math.round(p.x), 0, mw(m)), y: clamp(snap ? Math.round(p.y / G) * G : Math.round(p.y), 0, mh(m)) };
   const d = ui.drawing;
   // 最初の頂点付近をクリックしたら閉じて確定
@@ -736,43 +697,19 @@ function updateRoadHint() {
     n ? `頂点を${n}個配置 — Enterで確定 / Ctrl+Zで1つ戻す / Escで中止` : HINTS.road;
 }
 function addCrossing(p) {
-  let best = null;
-  curMap().lines.forEach(l => { const r = project(l, p); if (r && r.d < 18 && (!best || r.d < best.r.d)) best = { l, r }; });
-  if (!best) return;
-  if (best.l.lock || best.l.hidden) {   // ロック中・非表示の路線には追加できない
-    alert('「' + best.l.name + '」は' + (best.l.lock ? 'ロック中' : '非表示') + 'です。\n右パネルの ' + (best.l.lock ? '🔒 を解除' : '👁 で表示に戻す') + 'してから追加してください。');
+  const res = core.addCrossing({ map: curMap(), p, snap: snapOn() });
+  if (res.error === 'none') return;
+  if (res.error) {   // ロック中・非表示の路線には追加できない
+    const l = res.line;
+    alert('「' + l.name + '」は' + (res.error === 'locked' ? 'ロック中' : '非表示') + 'です。\n右パネルの ' +
+          (res.error === 'locked' ? '🔒 を解除' : '👁 で表示に戻す') + 'してから追加してください。');
     return;
   }
-  const q = snapCx(best.l, best.r), c = { id: newId(), seg: q.seg, t: q.t, name: '' };
-  best.l.crossings.push(c);
-  ui.line = best.l.id; ui.sel = { t: 'cx', id: c.id };
+  ui.line = res.line.id; ui.sel = { t: 'cx', id: res.crossing.id };
   afterAdd(); save(); renderAll();
 }
 // 1つの要素を削除(□で選んだ複数をまとめて削除するときも使う)
-function delOne(sel) {
-  const m = curMap(), id = sel.id;
-  if (sel.t === 'st') {
-    const s = findStation(id);
-    if (s && isStationLocked(s)) return;   // ロック中の路線の駅は削除しない
-    if (s && s.hub) {   // 乗り換え駅は、すべての路線と路線外の置き場所から削除
-      m.lines.forEach(x => { x.stations = x.stations.filter(st => st.id !== id); });
-      m.hubs = (m.hubs || []).filter(st => st.id !== id);
-    } else {
-      const home = m.lines.find(x => x.stations.some(st => st.id === id)) || curLine();
-      keepCrossings(home, () => { home.stations = home.stations.filter(st => st.id !== id); });
-    }
-    pruneLinks(m);   // この駅を指している接続リストも掃除する
-  }
-  else if (sel.t === 'stop') m.stops = (m.stops || []).filter(s => s.id !== id);
-  else if (sel.t === 'road') m.roads = (m.roads || []).filter(r => r.id !== id);
-  else if (sel.t === 'bx') m.boxes = (m.boxes || []).filter(b => b.id !== id);
-  else if (sel.t === 'img') m.images = (m.images || []).filter(x => x.id !== id);
-  else if (sel.t === 'cx') {
-    const owner = m.lines.find(l => l.crossings.some(c => c.id === id));   // 所属する路線から削除
-    if (owner && owner.lock) return;   // ロック中の路線の踏切は削除しない
-    if (owner) owner.crossings = owner.crossings.filter(c => c.id !== id);
-  }
-}
+function delOne(sel) { core.deleteElement({ map: curMap(), sel, fallbackLine: curLine() }); }
 function del() {
   const bulk = getBulk();
   if (bulk.length) {   // □で選んだ複数をまとめて削除
@@ -790,17 +727,10 @@ function del() {
 /* ---------- canvas events ---------- */
 const cv = document.getElementById('cv'), stage = document.getElementById('stage');
 const pt = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / ui.zoom, y: (e.clientY - r.top) / ui.zoom }; };
-const snapPt = p => document.getElementById('snap').checked ? { x: Math.round(p.x / G) * G, y: Math.round(p.y / G) * G } : p;
+// グリッドスナップのON/OFF(設定は画面側のチェックボックス)
+const snapOn = () => document.getElementById('snap').checked;
+const snapPt = p => snapOn() ? { x: Math.round(p.x / G) * G, y: Math.round(p.y / G) * G } : p;
 function afterAdd() { if (document.getElementById('autosel').checked) ui.tool = 'select'; }
-// 踏切の位置をグリッド上の点に合わせる
-function snapCx(l, r) {
-  if (!document.getElementById('snap').checked) return r;
-  const a = segA(l, r.seg), b = segB(l, r.seg);
-  if (!a || !b) return r;
-  const g = { x: Math.round(r.x / G) * G, y: Math.round(r.y / G) * G };
-  const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
-  return { seg: r.seg, t: l2 ? clamp(((g.x - a.x) * dx + (g.y - a.y) * dy) / l2, 0, 1) : 0 };
-}
 function applyZoom() {
   const m = curMap(), w = mw(m), h = mh(m);
   cv.setAttribute('width', w * ui.zoom); cv.setAttribute('height', h * ui.zoom);
@@ -871,10 +801,8 @@ cv.addEventListener('mousedown', e => {
   if (ui.tool === 'terminal') return addBusStop(p, 'terminal');
   if (ui.tool === 'road') { if (!ui.drawing) ui.drawing = { pts: [], hover: null }; addRoadPoint(p); return; }
   if (ui.tool === 'box') {
-    const q = snapPt(p), b = { id: newId(), x: q.x, y: q.y, w: G * 6, h: G * 3, text: 'ラベル', fill: '#ffffff' };
-    (m.boxes = m.boxes || []).push(b);
-    m.show = m.show || {}; m.show.box = true;   // 非表示でも置いたら表示に戻す
-    ui.sel = { t: 'bx', id: b.id }; drag = { t: 'bxnew', id: b.id, a: q, p0: p };
+    const b = core.addBox(m, snapPt(p));   // 既定サイズのラベル枠を追加
+    ui.sel = { t: 'bx', id: b.id }; drag = { t: 'bxnew', id: b.id, a: { x: b.x, y: b.y }, p0: p };
     renderAll(); return;
   }
   // 選択モードで空白(または線)をドラッグ → □で複数選択
@@ -945,65 +873,58 @@ window.addEventListener('mousemove', e => {
   if (drag.t === 'st') {
     const s = findStation(drag.id); if (!s) return;
     const q = snapPt(p);
-    ensureRoom(m, q.x, q.y);
-    s.x = clamp(q.x, 0, mw(m)); s.y = clamp(q.y, 0, mh(m));
-    // 乗り換え駅の場合はすべての路線の同じ駅を更新
-    if (s.hub) m.lines.forEach(x => {
-      const st = x.stations.find(st => st.id === s.id);
-      if (st) { st.x = s.x; st.y = s.y; }
-    });
+    core.ensureRoom(m, q.x, q.y);
+    // 乗り換え駅の場合はすべての路線の同じ駅も動かす(その判定も core 側)
+    core.moveStationTo(m, s, clamp(q.x, 0, mw(m)), clamp(q.y, 0, mh(m)));
   } else if (drag.t === 'stname') {
     const s = findStation(drag.id); if (!s) return;
     const q = snapPt(p);
-    s.nameX = q.x - drag.ox - s.x;
-    s.nameY = q.y - drag.oy - s.y;
+    core.update(s, { nameX: q.x - drag.ox - s.x, nameY: q.y - drag.oy - s.y });
   } else if (drag.t === 'cx') {
     const c = l.crossings.find(c => c.id === drag.id); if (!c) return;
-    const r = project(l, p);
-    if (r) { const q = snapCx(l, r); c.seg = q.seg; c.t = q.t; }
+    core.moveCrossingTo(l, c, p, snapOn());
   } else if (drag.t === 'stop') {
     const s = (m.stops || []).find(s => s.id === drag.id); if (!s) return;
     const q = snapPt({ x: p.x - drag.ox, y: p.y - drag.oy });
-    ensureRoom(m, q.x, q.y);
-    s.x = clamp(q.x, 0, mw(m)); s.y = clamp(q.y, 0, mh(m));
+    core.ensureRoom(m, q.x, q.y);
+    core.update(s, { x: clamp(q.x, 0, mw(m)), y: clamp(q.y, 0, mh(m)) });
   } else if (drag.t === 'stopname') {
     const s = (m.stops || []).find(s => s.id === drag.id); if (!s) return;
     const q = snapPt(p);
-    s.nameX = q.x - drag.ox - s.x;
-    s.nameY = q.y - drag.oy - s.y;
+    core.update(s, { nameX: q.x - drag.ox - s.x, nameY: q.y - drag.oy - s.y });
   } else if (drag.t === 'road') {
     const r = (m.roads || []).find(r => r.id === drag.id); if (!r) return;
     const q = snapPt({ x: p.x - drag.ox, y: p.y - drag.oy });
     const dx = q.x - drag.start[0].x, dy = q.y - drag.start[0].y;
     const maxR = Math.max(...r.pts.map(pt => pt.x)) + dx, maxD = Math.max(...r.pts.map(pt => pt.y)) + dy;
-    ensureRoom(m, maxR, maxD);
-    r.pts.forEach((pt, i) => { pt.x = clamp(drag.start[i].x + dx, 0, mw(m)); pt.y = clamp(drag.start[i].y + dy, 0, mh(m)); });
+    core.ensureRoom(m, maxR, maxD);
+    r.pts.forEach((pt, i) => core.update(pt, { x: clamp(drag.start[i].x + dx, 0, mw(m)), y: clamp(drag.start[i].y + dy, 0, mh(m)) }));
   } else if (drag.t === 'roadpt') {
     const r = (m.roads || []).find(r => r.id === drag.id); if (!r) return;
     const q = snapPt(p);
-    ensureRoom(m, q.x, q.y);
-    r.pts[drag.i] = { x: clamp(q.x, 0, mw(m)), y: clamp(q.y, 0, mh(m)) };
+    core.ensureRoom(m, q.x, q.y);
+    core.update(r.pts[drag.i], { x: clamp(q.x, 0, mw(m)), y: clamp(q.y, 0, mh(m)) });
   } else if (drag.t === 'img') {
     const im = (m.images || []).find(x => x.id === drag.id); if (!im) return;
     const q = snapPt({ x: p.x - drag.ox, y: p.y - drag.oy });
-    ensureRoom(m, q.x + im.w, q.y + im.h);
-    im.x = clamp(q.x, 0, Math.max(0, mw(m) - im.w)); im.y = clamp(q.y, 0, Math.max(0, mh(m) - im.h));
+    core.ensureRoom(m, q.x + im.w, q.y + im.h);
+    core.update(im, { x: clamp(q.x, 0, Math.max(0, mw(m) - im.w)), y: clamp(q.y, 0, Math.max(0, mh(m) - im.h)) });
   } else if (drag.t === 'imgr') {
     const im = (m.images || []).find(x => x.id === drag.id); if (!im) return;
     const q = snapPt(p);
-    ensureRoom(m, q.x, q.y);
-    im.w = Math.max(G, q.x - im.x); im.h = Math.max(G, q.y - im.y);
+    core.ensureRoom(m, q.x, q.y);
+    core.update(im, { w: Math.max(G, q.x - im.x), h: Math.max(G, q.y - im.y) });
   } else {
     const b = (m.boxes || []).find(b => b.id === drag.id); if (!b) return;
-    if (drag.t === 'bx') { const q = snapPt({ x: p.x - drag.ox, y: p.y - drag.oy }); ensureRoom(m, q.x + b.w, q.y + b.h); b.x = clamp(q.x, 0, mw(m) - b.w); b.y = clamp(q.y, 0, mh(m) - b.h); }
-    else if (drag.t === 'bxr') { const q = snapPt(p); ensureRoom(m, q.x, q.y); b.w = Math.max(G, q.x - b.x); b.h = Math.max(G, q.y - b.y); }
+    if (drag.t === 'bx') { const q = snapPt({ x: p.x - drag.ox, y: p.y - drag.oy }); core.ensureRoom(m, q.x + b.w, q.y + b.h); core.update(b, { x: clamp(q.x, 0, mw(m) - b.w), y: clamp(q.y, 0, mh(m) - b.h) }); }
+    else if (drag.t === 'bxr') { const q = snapPt(p); core.ensureRoom(m, q.x, q.y); core.update(b, { w: Math.max(G, q.x - b.x), h: Math.max(G, q.y - b.y) }); }
     else if (drag.t === 'bxnew') {
       if (!drag.moved && Math.hypot(p.x - drag.p0.x, p.y - drag.p0.y) < 4) return;
       drag.moved = true;
       const q = snapPt(p);
-      ensureRoom(m, q.x, q.y);
-      b.x = Math.min(drag.a.x, q.x); b.y = Math.min(drag.a.y, q.y);
-      b.w = Math.max(G, Math.abs(q.x - drag.a.x)); b.h = Math.max(G, Math.abs(q.y - drag.a.y));
+      core.ensureRoom(m, q.x, q.y);
+      core.update(b, { x: Math.min(drag.a.x, q.x), y: Math.min(drag.a.y, q.y),
+                       w: Math.max(G, Math.abs(q.x - drag.a.x)), h: Math.max(G, Math.abs(q.y - drag.a.y)) });
     }
   }
   renderCanvas(); renderSide();
@@ -1085,7 +1006,7 @@ document.getElementById('tools').addEventListener('click', e => {
   if (b.id === 'addimg') { imgReplaceId = null; document.getElementById('imgfile').click(); }
   if (b.id === 'exp') {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' }));
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(core.getState(), null, 2)], { type: 'application/json' }));
     a.download = 'railmaps.json'; a.click(); URL.revokeObjectURL(a.href);
   }
   if (b.id === 'expimg') exportImage();
@@ -1096,8 +1017,7 @@ document.getElementById('file').addEventListener('change', e => {
   r.onload = () => {
     try {
       const d = JSON.parse(r.result);
-      if (!Array.isArray(d.maps) || !d.maps.length || !d.maps.every(m => Array.isArray(m.lines) && m.lines.length)) throw 0;
-      replaceState(migrate(d));
+      core.importDocument(d);   // 形式が違うデータは例外を投げる(下でまとめて案内する)
       ui = { map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: ui.zoom, drawing: null }; persistOpen();
       save(); renderAll();
     } catch (err) { alert('読み込めませんでした。書き出したJSONファイルを選んでください。'); }
@@ -1108,7 +1028,7 @@ document.getElementById('file').addEventListener('change', e => {
 let imgReplaceId = null;   // 「画像を変更」で差し替える対象(未指定なら新規追加)
 // 保存領域の上限に近づいたら注意(画像を取り込むと超えやすい)
 function checkQuota() {
-  if (snapStr().length > 4500000) alert('画像の取り込みで保存領域の上限に近づいています。\n保存に失敗する場合は、画像を小さくするか削除してください。');
+  if (core.snapshot().length > 4500000) alert('画像の取り込みで保存領域の上限に近づいています。\n保存に失敗する場合は、画像を小さくするか削除してください。');
 }
 // 画像ファイルを読み込んでキャンバスに配置。大きい画像は縮小してdata URLに畳む(localStorage対策)
 function importImageFile(file, replaceId) {
@@ -1121,7 +1041,6 @@ function importImageFile(file, replaceId) {
     im.onerror = () => alert('画像を読み込めませんでした。');
     im.onload = () => {
       const m = curMap(), MAX = 1600;
-      m.show = m.show || {}; m.show.img = true;   // 非表示でも取り込んだら表示に戻す
       const nw = im.naturalWidth || 100, nh = im.naturalHeight || 100;
       let src = rd.result;
       const scale = Math.min(1, MAX / Math.max(nw, nh));
@@ -1135,7 +1054,7 @@ function importImageFile(file, replaceId) {
       }
       if (replaceId) {   // 既存の画像を差し替える(位置・大きさはそのまま)
         const t = (m.images || []).find(x => x.id === replaceId);
-        if (t) { t.src = src; ui.sel = { t: 'img', id: t.id }; save(); renderAll(); checkQuota(); return; }
+        if (t) { core.update(t, { src }); ui.sel = { t: 'img', id: t.id }; save(); renderAll(); checkQuota(); return; }
       }
       // 最長辺900pxに収めた大きさで、いま表示している画面の中央に置く
       const fit = Math.min(1, 900 / Math.max(nw, nh));
@@ -1144,9 +1063,8 @@ function importImageFile(file, replaceId) {
       const q = snapPt({ x: (st.scrollLeft + st.clientWidth / 2) / ui.zoom - w / 2,
                          y: (st.scrollTop + st.clientHeight / 2) / ui.zoom - h / 2 });
       const x = Math.max(0, Math.round(q.x)), y = Math.max(0, Math.round(q.y));
-      ensureRoom(m, x + w, y + h);
-      const a = mkImage(src, x, y, w, h);
-      (m.images = m.images || []).push(a);
+      core.ensureRoom(m, x + w, y + h);
+      const a = core.addImage(m, { src, x, y, w, h });   // 非表示でも取り込んだら表示に戻す
       ui.sel = { t: 'img', id: a.id };
       afterAdd(); save(); renderAll(); checkQuota();
     };
@@ -1189,7 +1107,7 @@ function exportImage() {
 function openMap(id) {
   if (!ui.open.includes(id)) ui.open.push(id);
   ui.map = id; ui.line = curMap().lines[0].id; ui.sel = null; ui.home = false;
-  history.syncView(viewNow()); persistOpen(); renderAll();
+  core.syncView(viewNow()); persistOpen(); renderAll();
 }
 function closeTab(id) {
   const i = ui.open.indexOf(id); if (i < 0) return;
@@ -1198,18 +1116,17 @@ function closeTab(id) {
     const n = ui.open[Math.min(i, ui.open.length - 1)];
     if (n) { ui.map = n; ui.line = curMap().lines[0].id; ui.sel = null; } else ui.home = true;
   }
-  history.syncView(viewNow()); persistOpen(); renderAll();
+  core.syncView(viewNow()); persistOpen(); renderAll();
 }
-function newMap() { const m = mkMap('路線図 ' + (S.maps.length + 1)); S.maps.push(m); save(); openMap(m.id); }
+function newMap() { const m = core.addMap('路線図 ' + (S.maps.length + 1)); save(); openMap(m.id); }
 function deleteMap(id) {
-  S.maps = S.maps.filter(x => x.id !== id);
-  if (!S.maps.length) S.maps.push(mkMap('路線図 1'));
+  core.deleteMap(id);
   save();                       // 表示を切り替える前に履歴へ(削除前の路線図に戻せるように)
   ui.open = ui.open.filter(x => x !== id);
   if (ui.map === id) {
     if (ui.open.length) { ui.map = ui.open[0]; ui.line = curMap().lines[0].id; ui.sel = null; } else ui.home = true;
   }
-  history.syncView(viewNow()); persistOpen(); renderAll();
+  core.syncView(viewNow()); persistOpen(); renderAll();
 }
 // Ctrl+W から呼ばれる。true=路線図を閉じた(アプリは閉じない) / false=開いている路線図がないのでウィンドウを閉じてよい
 window.__closeTab = () => {
@@ -1236,70 +1153,53 @@ document.getElementById('home').addEventListener('click', e => {
 const side = document.getElementById('side');
 side.addEventListener('input', e => {
   const id = e.target.id, v = e.target.value, m = curMap(), l = curLine();
-  if (id === 'mname') { m.name = v; renderTabs(); }
-  else if (id === 'lname') l.name = v;
-  else if (id === 'mbg') { m.bg = v; renderCanvas(); }
-  else if (id === 'btext') { m.boxes.find(b => b.id === ui.sel.id).text = v; renderCanvas(); }
-  else if (id === 'bfill') { m.boxes.find(b => b.id === ui.sel.id).fill = v; renderCanvas(); }
+  if (id === 'mname') { core.update(m, { name: v }); renderTabs(); }
+  else if (id === 'lname') core.update(l, { name: v });
+  else if (id === 'mbg') { core.update(m, { bg: v }); renderCanvas(); }
+  else if (id === 'btext') { core.update(m.boxes.find(b => b.id === ui.sel.id), { text: v }); renderCanvas(); }
+  else if (id === 'bfill') { core.update(m.boxes.find(b => b.id === ui.sel.id), { fill: v }); renderCanvas(); }
   else if (id === 'iop') {
     const im = (m.images || []).find(x => x.id === ui.sel.id);
-    if (im) { im.opacity = +v / 100; e.target.parentNode.firstChild.textContent = '不透明度(' + v + '%)'; renderCanvas(); }
+    if (im) { core.update(im, { opacity: +v / 100 }); e.target.parentNode.firstChild.textContent = '不透明度(' + v + '%)'; renderCanvas(); }
   }
   else if (id === 'izone') {
     const im = (m.images || []).find(x => x.id === ui.sel.id);
-    if (im) { im.z = v; save(); renderAll(); }
+    if (im) { core.update(im, { z: v }); save(); renderAll(); }
   }
   else if (id === 'sshape') {
     const s = findStation(ui.sel.id);
-    if (s) { s.shape = v; renderCanvas(); }
+    if (s) { core.update(s, { shape: v }); renderCanvas(); }
   }
-  else if (id === 'bsname') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { s.name = v; renderCanvas(); } }
-  else if (id === 'bskind') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { s.kind = v; save(); renderAll(); } }
-  else if (id === 'bscolor') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { s.color = v; renderCanvas(); } }
-  else if (id === 'bsnameRot') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { s.nameRot = +v; renderCanvas(); } }
-  else if (id === 'rname') { const r = (m.roads || []).find(r => r.id === ui.sel.id); if (r) { r.name = v; renderSide(); } }
-  else if (id === 'rcolor') { const r = (m.roads || []).find(r => r.id === ui.sel.id); if (r) { r.color = v; renderCanvas(); } }
+  else if (id === 'bsname') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { core.update(s, { name: v }); renderCanvas(); } }
+  else if (id === 'bskind') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { core.update(s, { kind: v }); save(); renderAll(); } }
+  else if (id === 'bscolor') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { core.update(s, { color: v }); renderCanvas(); } }
+  else if (id === 'bsnameRot') { const s = (m.stops || []).find(s => s.id === ui.sel.id); if (s) { core.update(s, { nameRot: +v }); renderCanvas(); } }
+  else if (id === 'rname') { const r = (m.roads || []).find(r => r.id === ui.sel.id); if (r) { core.update(r, { name: v }); renderSide(); } }
+  else if (id === 'rcolor') { const r = (m.roads || []).find(r => r.id === ui.sel.id); if (r) { core.update(r, { color: v }); renderCanvas(); } }
   else if (id === 'rwidth') {
     const r = (m.roads || []).find(r => r.id === ui.sel.id);
-    if (r) { r.width = +v; e.target.parentNode.firstChild.textContent = '幅(' + v + ')'; renderCanvas(); }
+    if (r) { core.update(r, { width: +v }); e.target.parentNode.firstChild.textContent = '幅(' + v + ')'; renderCanvas(); }
   }
-  else if (id === 'scolor') { const s = findStation(ui.sel.id); if (s) { s.color = v; renderCanvas(); } }
-  else if (id === 'snameRot') { const s = findStation(ui.sel.id); if (s) { s.nameRot = +v; renderCanvas(); } }
+  else if (id === 'scolor') { const s = findStation(ui.sel.id); if (s) { core.update(s, { color: v }); renderCanvas(); } }
+  else if (id === 'snameRot') { const s = findStation(ui.sel.id); if (s) { core.update(s, { nameRot: +v }); renderCanvas(); } }
   else if (e.target.classList && e.target.classList.contains('shubline')) {
     const s = findStation(ui.sel.id), cm = curMap();
-    const target = cm.lines.find(x => x.id === e.target.dataset.lid);
-    if (!s || !target) return;
-    const has = target.stations.some(st => st.id === s.id);
-    if (e.target.checked && !has) {
-      target.stations.push(s);                                   // 路線に組み込む
-      cm.hubs = (cm.hubs || []).filter(x => x.id !== s.id);      // 路線外の置き場所からは外す
-      // 「路線外」にまとめていた接続は、初めて乗る路線のリストへ移す
-      const alone = !cm.lines.some(x => x.id !== target.id && x.stations.some(st => st.id === s.id));
-      if (alone && s.links && Array.isArray(s.links[OFF_LINK])) {
-        s.links[target.id] = s.links[OFF_LINK].slice();
-        delete s.links[OFF_LINK];
-      }
-    } else if (!e.target.checked && has) {
-      target.stations = target.stations.filter(st => st.id !== s.id);
-      // どの路線にも属さなくなったら、路線外の乗り換え駅として残す(消さない)
-      if (!cm.lines.some(x => x.stations.some(st => st.id === s.id))) {
-        flattenLinks(s);   // 路線ごとの接続は「路線外」にまとめる
-        (cm.hubs = cm.hubs || []).push(s);
-      }
-    }
+    if (!s || !cm.lines.some(x => x.id === e.target.dataset.lid)) return;
+    // 路線に組み込む/外す。全部外すと路線外の乗り換え駅として残る
+    core.setStationLine(cm, s, e.target.dataset.lid, e.target.checked);
     save(); renderAll();
   }
-  else if (id === 'lwidth') { l.width = +v; e.target.parentNode.firstChild.textContent = '線の太さ(' + v + ')'; renderCanvas(); }
-  else if (id === 'lcolor') { l.color = v; renderCanvas(); }
+  else if (id === 'lwidth') { core.update(l, { width: +v }); e.target.parentNode.firstChild.textContent = '線の太さ(' + v + ')'; renderCanvas(); }
+  else if (id === 'lcolor') { core.update(l, { color: v }); renderCanvas(); }
   else if (id === 'sname') {
     const s = findStation(ui.sel.id);
     if (s) {
-      s.name = v;
-      if (s.hub) curMap().lines.forEach(x => { const st = x.stations.find(st => st.id === s.id); if (st) st.name = v; });
+      core.update(s, { name: v });
+      if (s.hub) curMap().lines.forEach(x => { const st = x.stations.find(st => st.id === s.id); if (st) core.update(st, { name: v }); });
       renderCanvas();
     }
   }
-  else if (id === 'cname') { l.crossings.find(c => c.id === ui.sel.id).name = v; renderCanvas(); }
+  else if (id === 'cname') { core.update(l.crossings.find(c => c.id === ui.sel.id), { name: v }); renderCanvas(); }
   // 文字入力とスライダーの連続操作は、まとめて1回の履歴にする
   if (['mname', 'lname', 'sname', 'bsname', 'rname', 'cname', 'btext'].includes(id) || e.target.type === 'range') deferSave();
   else save();
@@ -1308,17 +1208,12 @@ side.addEventListener('change', e => {
   if (e.target.id === 'gap') {
     const l = curMap().lines.find(x => x.id === e.target.dataset.lid) || curLine();
     const i = l.stations.findIndex(s => s.id === ui.sel.id);
-    if (i > 0) {
-      const a = l.stations[i - 1], b = l.stations[i], d = Math.max(0.5, parseFloat(e.target.value) || 1) * G;
-      const len = dist(a, b), ux = len ? (b.x - a.x) / len : 1, uy = len ? (b.y - a.y) / len : 0;
-      const nx = a.x + ux * d - b.x, ny = a.y + uy * d - b.y;
-      for (let j = i; j < l.stations.length; j++) { l.stations[j].x += nx; l.stations[j].y += ny; }
-    }
+    if (i > 0) core.adjustGap(curMap(), l, i, e.target.value);
     save(); renderAll(); return;
   }
   if (e.target.id === 'bw' || e.target.id === 'bh') {
     const b = (curMap().boxes || []).find(b => b.id === ui.sel.id), v = Math.max(1, Math.round(+e.target.value) || 1) * G;
-    if (e.target.id === 'bw') b.w = v; else b.h = v;
+    if (e.target.id === 'bw') core.update(b, { w: v }); else core.update(b, { h: v });
     save(); renderAll(); return;
   }
   renderSide();
@@ -1340,16 +1235,10 @@ side.addEventListener('click', e => {
     const row = ly.closest('#lines li[data-id]'), t = row && m.lines.find(x => x.id === row.dataset.id);
     if (t) {
       const act = ly.dataset.act;
-      if (act === 'eye') t.hidden = !t.hidden;
-      else if (act === 'lock') t.lock = !t.lock;
-      else {
-        // 表示は上=手前なので、上へは配列の後ろ(奥ではなく手前側)へ移動する
-        const i = m.lines.indexOf(t), up = act === 'up';
-        if ((up && i < m.lines.length - 1) || (!up && i > 0)) {
-          m.lines.splice(i, 1);
-          m.lines.splice(up ? i + 1 : i - 1, 0, t);
-        }
-      }
+      if (act === 'eye') core.update(t, { hidden: !t.hidden });
+      else if (act === 'lock') core.update(t, { lock: !t.lock });
+      // 表示は上=手前なので、「上へ」は配列の後ろ(奥ではなく手前側)へ移動する
+      else core.reorderLine(m, t, act === 'up');
       clearBulk();   // 表示設定が変わるので□選択は解除
       if (ui.sel && !selVisible(ui.sel)) ui.sel = null;
       save(); renderAll();
@@ -1361,8 +1250,7 @@ side.addEventListener('click', e => {
   // --- トグルボタン(単一のON/OFF)。表示は aria-pressed の付け替えで切り替える ---
   else if (e.target.classList && e.target.classList.contains('showel')) {
     // 種類ごとの表示/非表示(レイヤー)。値はデータから反転する
-    m.show = m.show || {};
-    m.show[e.target.dataset.k] = !showEl(m, e.target.dataset.k);
+    core.toggleShow(m, e.target.dataset.k);
     clearBulk();   // 表示設定が変わるので□選択は解除
     if (ui.sel && !selVisible(ui.sel)) ui.sel = null;
     save(); renderAll();
@@ -1372,11 +1260,8 @@ side.addEventListener('click', e => {
     if (s) { setHub(s, !s.hub); save(); renderAll(); }
   }
   else if (id === 'lloop') {
-    const lc = curLine();
     // 閉じる/開くで区間の数が変わるため、切り替え前の踏切の位置を基準に付け直す
-    const ps = lc.crossings.map(c => segPt(lc, c.seg, c.t));
-    lc.loop = !lc.loop;
-    keepCrossings(lc, () => { }, ps);
+    core.toggleLoop(curLine());
     save(); renderAll();
   }
   else if (id === 'addimgp') { imgReplaceId = null; document.getElementById('imgfile').click(); }
@@ -1384,9 +1269,9 @@ side.addEventListener('click', e => {
     // 画像は下敷きだとクリックで選択できないことがあるので、一覧からも選べるようにする
     ui.sel = { t: 'img', id: e.target.closest('li').dataset.iid }; ui.tool = 'select'; renderAll();
   }
-  else if (id === 'sreset') { const s = findStation(ui.sel.id); if (s) delete s.color; save(); renderAll(); }
-  else if (id === 'bsreset') { const s = (m.stops || []).find(s => s.id === ui.sel.id); delete s.color; save(); renderAll(); }
-  else if (id === 'droad') { m.roads = (m.roads || []).filter(r => r.id !== ui.sel.id); ui.sel = null; save(); renderAll(); }
+  else if (id === 'sreset') { const s = findStation(ui.sel.id); if (s) core.remove(s, 'color'); save(); renderAll(); }
+  else if (id === 'bsreset') { core.remove((m.stops || []).find(s => s.id === ui.sel.id), 'color'); save(); renderAll(); }
+  else if (id === 'droad') { core.deleteElement({ map: m, sel: { t: 'road', id: ui.sel.id }, fallbackLine: curLine() }); ui.sel = null; save(); renderAll(); }
   else if (id === 'idel') { del(); }
   else if (id === 'ichg') { imgReplaceId = ui.sel && ui.sel.id; document.getElementById('imgfile').click(); }
   // --- 「接続する駅」リスト(路線ごと) ---
@@ -1396,12 +1281,12 @@ side.addEventListener('click', e => {
     if (!list || !row || !s) return;
     const lid = list.dataset.lid, links = linksIn(s, lid), k = links.indexOf(row.dataset.id);
     if (k < 0) return;
-    if (e.target.classList.contains('ldel')) links.splice(k, 1);
-    else if (e.target.classList.contains('lup') && k > 0) links.splice(k - 1, 0, links.splice(k, 1)[0]);
-    else if (e.target.classList.contains('ldown') && k < links.length - 1) links.splice(k + 1, 0, links.splice(k, 1)[0]);
+    const next = links.slice();   // 状態は差し替える(配列を直接書き換えない)
+    if (e.target.classList.contains('ldel')) next.splice(k, 1);
+    else if (e.target.classList.contains('lup') && k > 0) next.splice(k - 1, 0, next.splice(k, 1)[0]);
+    else if (e.target.classList.contains('ldown') && k < next.length - 1) next.splice(k + 1, 0, next.splice(k, 1)[0]);
     else return;
-    if (!s.links || typeof s.links !== 'object') s.links = {};
-    s.links[lid] = links; save(); renderAll();
+    core.setLinks(s, lid, next); save(); renderAll();
   }
   // 行のボタン以外をクリック → その駅を選択してパネルを切り替え(左パネルの駅リストと同じ)
   else if (e.target.closest && e.target.closest('.linklist li')) {
@@ -1416,32 +1301,15 @@ side.addEventListener('click', e => {
   }
   else if (id === 'newwin') window.open('index.html#' + encodeURIComponent(m.id));
   else if (id === 'addline') {
-    const n = m.lines.length, l = mkLine((n + 1) + '号線', COLORS[n % COLORS.length]);
-    m.lines.push(l); ui.line = l.id; ui.sel = null; save(); renderAll();
+    const l = core.addLine(m);
+    ui.line = l.id; ui.sel = null; save(); renderAll();
   } else if (id === 'addroadp') {
     if (ui.drawing) finishRoad();
     ui.tool = 'road'; startRoadDrawing(); renderTools();
   } else if (id === 'dline') {
-    const deadId = m.lines.length > 1 ? ui.line : null;   // 削除する路線のID
-    if (m.lines.length > 1) {
-      const gone = m.lines.find(x => x.id === ui.line);
-      m.lines = m.lines.filter(x => x.id !== ui.line);
-      ui.line = m.lines[0].id;
-      // 消えた路線にしか無かった乗り換え駅は、路線外の乗り換え駅として残す(路線に依存させない)
-      (gone ? gone.stations : []).forEach(st => {
-        if (st.hub && !m.lines.some(x => x.stations.some(y => y.id === st.id)) &&
-            !(m.hubs || []).some(y => y.id === st.id)) (m.hubs = m.hubs || []).push(st);
-      });
-    } else {
-      const only = m.lines[0];
-      const hubs = only.stations.filter(st => st.hub);   // 最後の路線を空にするときも乗り換え駅は残す
-      only.stations = []; only.crossings = [];
-      hubs.forEach(st => { if (!(m.hubs || []).some(y => y.id === st.id)) (m.hubs = m.hubs || []).push(st); });
-    }
-    // 路線に属さなくなった乗り換え駅の接続は「路線外」へ、消えた路線ごとの接続は捨てる
-    (m.hubs || []).forEach(st => { if (!m.lines.some(l => l.stations.some(x => x.id === st.id))) flattenLinks(st); });
-    if (deadId) allStations(m).forEach(st => { if (st.links && st.links[deadId]) delete st.links[deadId]; });
-    pruneLinks(m);   // 路線ごと消した駅への接続を外す
+    // 路線を削除する(最後の1本のときは路線を空にする。乗り換え駅は残す)
+    const deadId = core.deleteLine(m, ui.line);
+    if (deadId) ui.line = m.lines[0].id;
     ui.sel = null; save(); renderAll();
   } else if (id === 'dmap') {
     if (!confirm('「' + m.name + '」を削除しますか?')) return;
@@ -1481,9 +1349,9 @@ side.addEventListener('drop', e => {
   const from = links.indexOf(linkDrag.id), to = links.indexOf(row.dataset.id);
   linkDrag = null;
   if (from >= 0 && to >= 0 && from !== to) {
-    links.splice(to, 0, links.splice(from, 1)[0]);
-    if (!s.links || typeof s.links !== 'object') s.links = {};
-    s.links[lid] = links; save(); renderAll();
+    const next = links.slice();   // 状態は差し替える(配列を直接書き換えない)
+    next.splice(to, 0, next.splice(from, 1)[0]);
+    core.setLinks(s, lid, next); save(); renderAll();
   }
 });
 side.addEventListener('dragend', () => {
@@ -1496,10 +1364,10 @@ side.addEventListener('change', e => {
   if (!e.target.classList || !e.target.classList.contains('linksel')) return;
   const s = findStation(ui.sel && ui.sel.id), box = e.target.closest('[data-lid]'), v = e.target.value;
   if (!s || !box || !v) return;   // 「追加する駅を選択…」のときは何もしない
-  if (!s.links || typeof s.links !== 'object') s.links = {};
   const lid = box.dataset.lid;
+  if (!s.links || typeof s.links !== 'object') core.update(s, { links: {} });
   if (linksIn(s, lid).includes(v)) return;   // 同じ接続を重ねない
-  s.links[lid] = linksIn(s, lid).concat(v);
+  core.setLinks(s, lid, linksIn(s, lid).concat(v));
   save(); renderAll();
 });
 
@@ -1551,9 +1419,9 @@ window.addEventListener('storage', e => {
   try {
     const d = JSON.parse(e.newValue);
     if (!Array.isArray(d.maps) || !d.maps.length) return;
-    replaceState(d);
+    core.replace(d);
     // 別ウィンドウの変更を取り込んだ時点で履歴をリセット
-    history.reset(snapStr(), viewNow());
+    core.resetHistory(viewNow());
     updateUndoButtons();
     ui.open = ui.open.filter(id => S.maps.some(m => m.id === id));
     if (!S.maps.some(m => m.id === ui.map)) {
