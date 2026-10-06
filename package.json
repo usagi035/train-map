@@ -1,23 +1,10 @@
 {
   "name": "railway-map-editor",
   "version": "1.0.0",
-  "description": "路線図エディタ",
-  "main": "src/main/main.js",
+  "description": "路線図エディタ(Web版)",
+  "private": true,
   "scripts": {
-    "start": "electron .",
-    "dist": "electron-builder --win && node scripts/make-uninstaller.js",
-    "uninstaller": "node scripts/make-uninstaller.js"
-  },
-  "devDependencies": {
-    "electron": "^33.0.0",
-    "electron-builder": "^25.0.0"
-  },
-  "build": {
-    "appId": "com.example.railwaymapeditor",
-    "productName": "RailwayMapEditor",
-    "files": ["src/**/*"],
-    "win": {
-      "target": ["nsis", "portable"]
-    }
+    "start": "node scripts/serve.cjs",
+    "serve": "node scripts/serve.cjs"
   }
 }

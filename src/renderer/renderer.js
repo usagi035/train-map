@@ -299,7 +299,9 @@ window.addEventListener('mousemove', e => {
 // ダブルクリックで道路を確定
 cv.addEventListener('dblclick', () => { if (ui.drawing) finishRoad(); });
 window.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') { e.preventDefault(); if (!window.__closeTab()) window.close(); return; }
+  // タブを閉じる。Ctrl+W/Cmd+W はブラウザ(タブを閉じる)が先に掴むため Web 版では Alt+W。
+  // e.code は配列・OS に依存しない物理キー(Mac の Option+W は表示文字が '∫' になる)。key の方でも受ける。
+  if (e.altKey && (e.code === 'KeyW' || e.key.toLowerCase() === 'w')) { e.preventDefault(); if (!window.__closeTab()) window.close(); return; }
   const k = e.key.toLowerCase();
   const ae = document.activeElement;
   const inText = ae && /INPUT|TEXTAREA/.test(ae.tagName) && !/^(checkbox|radio|range|color|button|submit|file|hidden)$/i.test(ae.type);

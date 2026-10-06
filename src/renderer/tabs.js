@@ -8,7 +8,7 @@ import { core, ui, esc, curMap, viewNow, save, renderAll } from './ui-state.js';
 export function renderTabs() {
   document.getElementById('tabs').innerHTML =
     ui.open.map(id => S.maps.find(m => m.id === id)).filter(Boolean).map(m =>
-      `<div class="tab ${m.id === ui.map && !ui.home ? 'on' : ''}"><span data-id="${m.id}">${esc(m.name)}</span><button class="x" data-x="${m.id}" title="閉じる (Ctrl+W)" aria-label="閉じる">✕</button></div>`).join('') +
+      `<div class="tab ${m.id === ui.map && !ui.home ? 'on' : ''}"><span data-id="${m.id}">${esc(m.name)}</span><button class="x" data-x="${m.id}" title="閉じる (Alt+W)" aria-label="閉じる">✕</button></div>`).join('') +
     '<button id="addmap" title="路線図を追加">＋</button><button id="listbtn" title="路線図の一覧">一覧</button>';
 }
 export function renderHome() {
@@ -43,7 +43,7 @@ export function deleteMap(id) {
   }
   core.syncView(viewNow()); persistOpen(); renderAll();
 }
-// Ctrl+W から呼ばれる。true=路線図を閉じた(アプリは閉じない) / false=開いている路線図がないのでウィンドウを閉じてよい
+// Alt+W から呼ばれる。true=路線図を閉じた(タブは閉じない) / false=開いている路線図がないのでウィンドウを閉じてよい
 window.__closeTab = () => {
   if (ui.home) { if (ui.open.length) { ui.home = false; renderAll(); return true; } return false; }
   closeTab(ui.map); return true;
