@@ -15,7 +15,7 @@ export const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&l
 export const HINTS = {
   select:   '駅・バス停・道路をドラッグして移動 / 空白をドラッグして□で複数選択→Deleteで一括削除 / Deleteキーで削除 / Space+ドラッグで画面移動',
   station:  'クリックで駅を追加(線の上なら間に挿入) / 既存の駅をクリックすると追加せず、選択・移動へ自動で切り替わる',
-  hub:      'クリックで乗り換え駅を追加(どの路線にも属さない独立駅。右パネルで路線に組み込める)',
+  hub:      'クリックで乗り換え駅を追加(どの路線にも属さない独立駅。左のクイック操作パネルで路線に組み込める)',
   crossing: '線の近くをクリックして踏切を置く',
   busstop:  'クリックでバス停を配置(幹線道路とは独立して置けます)',
   terminal: 'クリックでバスターミナルを配置',
@@ -173,6 +173,7 @@ export function renderAll() {
   document.getElementById('stage').style.display = home ? 'none' : '';
   document.getElementById('side').style.display = home ? 'none' : '';
   document.getElementById('left').style.display = home ? 'none' : '';
+  document.getElementById('quick').style.display = home ? 'none' : '';
   document.getElementById('tools').style.display = home ? 'none' : '';
   document.getElementById('hint').style.display = home ? 'none' : '';
   document.getElementById('home').style.display = home ? 'block' : 'none';

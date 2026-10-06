@@ -41,6 +41,18 @@
   #cv { display:block; user-select:none; }
   aside { width:270px; border-left:1px solid var(--rule); background:#fff; padding:12px; overflow:auto; }
   #left { border-left:0; border-right:1px solid var(--rule); }
+  /* クイック操作パネル(左パネルの右横)。よく使うON/OFFトグルと路線の追加を並べておく */
+  #quick { width:182px; border-left:0; border-right:1px solid var(--rule); }
+  #quick h3 { margin:14px 0 7px; font-size:12.5px; border-top:1px dashed var(--rule); padding-top:11px; }
+  #quick h3:first-child { margin-top:0; border-top:0; padding-top:0; }
+  #quick > button { display:block; width:100%; margin-bottom:7px; }
+  #quick .tgl { display:flex; width:100%; white-space:normal; text-align:left; margin-bottom:6px; }
+  #quick .layeropts { grid-template-columns:1fr; gap:6px; margin-bottom:0; }
+  #quick .layeropts .tgl { margin-bottom:0; }
+  #quick .qline { display:flex; align-items:center; gap:6px; margin-bottom:4px; font-size:12.5px; color:var(--ink); }
+  #quick .qline input { flex:none; }
+  #quick .qline i { display:inline-block; width:18px; height:5px; border-radius:3px; flex:none; }
+  #quick .qline span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #left h3 i { display:inline-block; width:18px; height:6px; border-radius:3px; margin-right:6px; vertical-align:middle; }
   aside h3 { margin:16px 0 6px; font-size:13px; }
   aside h3:first-child { margin-top:0; }
@@ -109,7 +121,7 @@
   .linklist li.on { border-color:#2f7d64; background:#eaf5f1; }
   .linklist .badge { flex:none; font-size:10px; font-weight:700; color:#2f7d64; background:#e3efe9; border-radius:3px; padding:1px 5px; }
   .linklist svg { flex:none; }
-  #hint { position:fixed; left:282px; bottom:10px; background:var(--ink); color:#fff; padding:6px 12px; border-radius:5px; font-size:12px; pointer-events:none; }
+  #hint { position:fixed; left:464px; bottom:10px; background:var(--ink); color:#fff; padding:6px 12px; border-radius:5px; font-size:12px; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -141,6 +153,7 @@
 </header>
 <main>
   <aside id="left"></aside>
+  <aside id="quick"></aside>
   <div id="stage"><svg id="cv" width="2400" height="1600" viewBox="0 0 2400 1600"></svg></div>
   <aside id="side"></aside>
   <div id="home"></div>

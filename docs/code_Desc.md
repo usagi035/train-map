@@ -51,7 +51,7 @@ npm start
 | `src/core/operations.js` | 追加・削除・移動などの操作と `createCore()`。**画面側が core に触れる唯一の入口** |
 | `src/renderer/ui-state.js` | 画面側の共通状態・共通操作(`ui` / `save` / `renderAll` / □選択 / レイヤー判定 / 道路描画 / 削除)。**他の画面モジュールはここからのみ import する** |
 | `src/renderer/canvas.js` | SVG の描画(`renderCanvas`)とズーム・スクロール(`pt` / `applyZoom` / `setZoom` / `centerStation`) |
-| `src/renderer/side-panel.js` | 右パネルの描画(`renderSide` / `sec`)と `#side` のイベント |
+| `src/renderer/side-panel.js` | 右パネルの描画(`renderSide` / `sec`)と、左のクイック操作パネル(`renderQuick`)。イベントは `#side` と `#quick` の両方へ登録 |
 | `src/renderer/left-panel.js` | 左パネルの描画(`renderLeft` / `stationGlyph`)と駅の並べ替え |
 | `src/renderer/tabs.js` | タブと一覧(ホーム)の描画・操作(`renderTabs` / `renderHome` / `openMap` / `closeTab` / `newMap` / `deleteMap`) |
 | `src/renderer/renderer.js` | 画面側の入口(約460行)。初期化、マウス・キー・ファイル入力、`storage` 同期、各モジュールの描画関数の登録 |
@@ -134,6 +134,7 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
                                 非表示の #file(JSON) と #imgfile(画像)
 <main>
   <aside id="left">          … 左パネル: 選択中の路線の駅リスト(並べ替え) ← renderLeft()
+  <aside id="quick">         … クイック操作パネル(路線追加・環状線・ターミナル設定・その他の表示) ← renderQuick()
   <div id="stage"><svg id="cv"> … 描画キャンバス(SVG)                    ← renderCanvas()
   <aside id="side">          … 右パネル: 設定(6グループ)                  ← renderSide()
   <div id="home">            … 路線図の一覧画面                          ← renderHome()
@@ -153,6 +154,7 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 | レイヤー操作 | `#lines .lyr` / `.lyr:disabled` / `#lines li.off` | 👁🔒↑↓ ボタン、非表示行の薄表示 |
 | **トグルボタン** | `.tgl` / `[aria-pressed="true"]` | ピル型。ON=緑点灯+白ドット、OFF=グレーのドット。単一ON/OFF項目に使用 |
 | 右パネルのグループ | `.sec` `.sech` `.sect` `.secn` `.seci` `.secb` `.subh` | 開閉セクション(見出し=ボタン、`▾`回転、バッジ `.secn`) |
+| クイック操作パネル | `#quick h3` / `#quick .qline` / `#quick .tgl` | 左パネル右の常設列(幅182px、開閉なし)。破線で区切る見出し、幅いっぱいのトグル、属する路線のチェック行(路線名は省略記号) |
 | 接続リスト | `.linkgroup` / `.linklist` / `.badge` | 路線ごとの「接続する駅」 |
 | ヒント | `#hint` | 左下に固定 |
 
@@ -171,7 +173,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | --- | --- |
 | `ui-state.js` | 画面側の共通状態と共通操作(`core` の生成、`ui`、`save`、`renderAll`、□選択、レイヤー判定、道路描画、削除) |
 | `canvas.js` | SVG 描画とズーム・スクロール |
-| `side-panel.js` | 右パネルの描画と `#side` のイベント |
+| `side-panel.js` | 右パネル・クイック操作パネルの描画と `#side` / `#quick` のイベント |
 | `left-panel.js` | 左パネルの描画と駅の並べ替え |
 | `tabs.js` | タブ・一覧(ホーム)の描画と操作 |
 | `renderer.js` | 初期化・マウス/キー/ファイル入力・`storage` 同期・描画関数の登録 |
@@ -292,12 +294,13 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | └ 内部 `conn(s)` | 駅の `links` から接続線を描く。`drawnConn` で `from>to` の重複を除き**常に1本だけ**。色と太さは接続先の駅の路線(路線外はグレー) |
 | └ 内部 `xf(l,c)` / `dims(l)` | 踏切の位置と回転(線の接線方向)/ 踏切バーの寸法 |
 | `sec(id, title, body, badge)` | 右パネルの開閉セクションHTML(`aria-expanded` 付き見出し + バッジ + `▾`) |
-| `renderSide()` | 右パネルを生成。**6グループ**: ①`sel` 選択中の要素(駅/乗り換え駅/バス停/道路/ラベル枠/画像/踏切/□選択) ②`lines` 路線(レイヤー)+「その他の表示」トグル ③`line` 選択中の路線(名前・色・太さ・環状線トグル) ④`roads` ⑤`images` ⑥`map` 路線図の設定。**選択が変わったら `sel` を自動で開き先頭へスクロール、それ以外は開いた位置を維持**(`keepScroll`) |
+| `renderSide()` | 右パネルを生成。**6グループ**: ①`sel` 選択中の要素(駅/乗り換え駅/バス停/道路/ラベル枠/画像/踏切/□選択) ②`lines` 路線(レイヤー) ③`line` 選択中の路線(名前・色・太さ・削除) ④`roads` ⑤`images` ⑥`map` 路線図の設定。**選択が変わったら `sel` を自動で開き先頭へスクロール、それ以外は開いた位置を維持**(`keepScroll`)。末尾で `renderQuick()` も作り直す |
+| └ 内部 `renderQuick()` | 左のクイック操作パネル(`#quick`)。開閉なしの3見出し: **路線**(`#addline` 路線を追加、`#lloop` 環状線トグル) / **ターミナル(乗り換え駅)**(`#shub` トグルと `.shubline` の属する路線チェック。`ui.sel.t==='st'` のときだけ、それ以外は案内文) / **その他の表示**(`.showel` 4トグル)。右パネルから移動した項目 |
 | `stationGlyph(s, l)` | 左パネル用の小さい駅シンボル(SVG) |
 | `renderLeft()` | 左パネル: 選択中の路線の駅を**経路順**に並べる(並べ替えハンドル・↑↓・「乗」バッジ・非表示/ロック表示) |
 | `moveStation(l, from, to)` | 駅の並べ替え。`keepCrossings` で踏切位置を保持 → `save()`+`renderAll()` |
 | `centerStation(s)` | ステージをその駅の中央へスクロール |
-| **`renderAll()`** | 一覧画面かエディタかで表示を切り替え、`renderTabs` →(エディタなら)`renderTools/renderCanvas/renderSide/renderLeft` |
+| **`renderAll()`** | 一覧画面かエディタかで表示を切り替え(`#stage` / `#side` / `#left` / `#quick` / `#tools` / `#hint` は一覧で非表示)、`renderTabs` →(エディタなら)`renderTools/renderCanvas/renderSide(+renderQuick)/renderLeft` |
 
 ### 5.9 編集操作(L781〜927)
 
@@ -352,13 +355,17 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `#file change` | JSON を parse → `maps`/`lines` の形を検証 → `migrate()` → `ui` を初期化 → `save()`。ダメなら alert |
 | `#imgfile change` | `importImageFile(file, imgReplaceId)` を呼んで即クリア |
 
-#### 右パネル `#side`
+#### 右パネル `#side` / クイック操作パネル `#quick`
+
+`input` / `change` / `click` は `onPanel(type, fn)` で **`#side` と `#quick` の両方**へ登録している(同じハンドラを共有)。
+`#shub`・`#lloop`・`#addline`・`.showel`・`.shubline` は `#quick` 側の要素で、それ以外は `#side` 側の要素。
+ドラッグ(`.linklist`)と `.linksel` の `change` は `#side` だけ。
 
 | 箇所 | 動作 |
 | --- | --- |
 | `input` イベント | 全入力欄の分岐: `mname/lname/lcolor/lwidth`(路線)、`mbg`(背景)、`sname/sshape/scolor/snameRot`(駅)、`cname`(踏切)、`bsname/bskind/bscolor/bsnameRot`(バス停)、`rname/rcolor/rwidth`(道路)、`btext/bfill`(ラベル枠)、`iop/izone`(画像不透明度・重ね順)。**`.shubline`(属する路線のチェック)**: チェックで路線に組み込み `hubs` から外す(初めて乗る路線なら「路線外」の接続を移す)、外すとどの路線にも無くなったら **`m.hubs` へ戻して消さない**+`flattenLinks()`。末尾: 文字入力とスライダーは `deferSave()`、他は `save()` |
 | `change` イベント | `#gap`(前の駅との間隔)…**これ以降の駅も一緒に動かす** / `#bw` `#bh`(ラベル枠のサイズ)。それ以外は `renderSide()` で再描画 |
-| `click` イベント | 見出し `[data-sech]` で開閉(`railacc` に記憶) → `.lyr`(**👁表示/非表示・🔒ロック・↑↓重ね順**。表示設定が変わったら□選択解除・見えない選択解除) → 路線行(`ui.line` 切替) → 道路行(選択) → **`.showel` トグル(種類ごとの表示・データから反転)** → **`#shub` トグル(乗り換え駅ON/OFF→`setHub`)** → **`#lloop` トグル(環状線ON/OFF・踏切を再射影)** → 画像行(選択) → `sreset`/`bsreset`(色を初期値へ) → `droad`/`idel`/`ichg` → 接続リストの `lup`/`ldown`/`ldel`(↑↓・削除) → 接続行のクリック(**その駅を選択してパネル切替**) → `newwin`(別ウィンドウ) → `addline`(路線追加) → `addroadp`(道路描画へ) → `dline`(路線削除。**消える路線にしか無かった乗り換え駅は `hubs` に残し、路線ごとの接続は掃除**) → `dmap`(路線図削除) |
+| `click` イベント | 見出し `[data-sech]` で開閉(`railacc` に記憶) → `.lyr`(**👁表示/非表示・🔒ロック・↑↓重ね順**。表示設定が変わったら□選択解除・見えない選択解除) → 路線行(`ui.line` 切替) → 道路行(選択) → **`.showel` トグル(種類ごとの表示・データから反転)** → **`#shub` トグル(乗り換え駅ON/OFF→`setHub`)** → **`#lloop` トグル(環状線ON/OFF・踏切を再射影)** → 画像行(選択) → `sreset`/`bsreset`(色を初期値へ) → `droad`/`idel`/`ichg` → 接続リストの `lup`/`ldown`/`ldel`(↑↓・削除) → 接続行のクリック(**その駅を選択してパネル切替**) → `newwin`(別ウィンドウ) → `addline`(路線追加) → `addroadp`(道路描画へ) → `dline`(路線削除。**消える路線にしか無かった乗り換え駅は `hubs` に残し、路線ごとの接続は掃除**) → `dmap`(路線図削除)。**※ `.showel`・`#shub`・`#lloop`・`#addline` は `#quick` 側の要素** |
 | `dragstart/over/drop/dragend` | 接続リストのドラッグ並べ替え(**同じリストの中だけ**可) |
 | `change`(`.linksel`) | 接続先セレクトで駅を選ぶと**その場で追加**(重複は無視)。追加ボタンは無い |
 

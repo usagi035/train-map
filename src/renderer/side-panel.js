@@ -1,5 +1,6 @@
 /* ===========================================================================
-   右パネル(選択中・路線・道路・画像・路線図の設定)の描画と操作。
+   右パネル(選択中・路線・道路・画像・路線図の設定)と、左パネルの横のクイック操作パネル
+   (路線の追加・環状線・乗り換え駅(ターミナルハブ)・種類ごとの表示)の描画と操作。
    (元は src/ui/renderer.js の1ファイル。指示書 §8〜§12 に沿って画面側を分割した)
    =========================================================================== */
 import { G, SHAPES, STOP_KINDS, STOP_COLOR, OFF_LINK, BG, lw, allStations, linksIn, linkGroups } from '../core/model.js';
@@ -46,12 +47,8 @@ export function renderSide() {
         sel = `<label>駅名<input id="sname" value="${esc(s.name)}"></label>` +
           `<label>形<select id="sshape">${Object.entries(SHAPES).map(([k, v]) => `<option value="${k}"${(s.shape || 'circle') === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>` +
           `<div class="row" style="align-items:center"><span>色</span><input type="color" id="scolor" value="${s.color || (ls.length ? ls[0].color : STOP_COLOR)}"><button id="sreset">路線の色に戻す</button></div>` +
-          `<label>駅名の向き<select id="snameRot"><option value="0"${(s.nameRot || 0) === 0 ? ' selected' : ''}>普通</option><option value="45"${(s.nameRot || 0) === 45 ? ' selected' : ''}>斜め(45°)</option><option value="90"${(s.nameRot || 0) === 90 ? ' selected' : ''}>縦(90°)</option></select></label>` +
-          `<button type="button" class="tgl" id="shub" aria-pressed="${s.hub ? 'true' : 'false'}">乗り換え駅(ターミナルハブ)</button>` +
-          (s.hub ? '<div class="note" style="margin-bottom:4px">属する路線:</div>' +
-            m.lines.map(x => `<label style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><input type="checkbox" class="shubline" data-lid="${x.id}"${x.stations.some(st => st.id === s.id) ? ' checked' : ''}> <i style="display:inline-block;width:18px;height:5px;border-radius:3px;background:${x.color};flex:none"></i>${esc(x.name)}</label>`).join('') +
-            `<p class="note">${ls.length ? 'チェックを全部外すと、どの路線にも属さない乗り換え駅(路線外)になります。' : '現在、どの路線にも属していません(路線外)。チェックした路線に組み込めます。'}</p>`
-            : '<p class="note">ONにすると、後からこの駅を乗り換え駅に変更できます(OFFで通常の駅に戻ります)。</p>');
+          `<label>駅名の向き<select id="snameRot"><option value="0"${(s.nameRot || 0) === 0 ? ' selected' : ''}>普通</option><option value="45"${(s.nameRot || 0) === 45 ? ' selected' : ''}>斜め(45°)</option><option value="90"${(s.nameRot || 0) === 90 ? ' selected' : ''}>縦(90°)</option></select></label>`;
+        // 乗り換え駅(ターミナルハブ)の設定は、左のクイック操作パネルに出す(renderQuick)
         // 接続する駅:路線ごとに別のリスト(普通の駅でも登録・編集できる)
         const colorOf = id => { const c = linesOf(id)[0]; return c ? c.color : STOP_COLOR; };
         linkGroups(m, s).forEach(gr => {
@@ -165,20 +162,13 @@ export function renderSide() {
         `<button class="lyr" data-act="down" title="奥にする"${i === 0 ? ' disabled' : ''}>↓</button>` +
         `</span></li>`;
     }).join('') +
-    '</ul><button id="addline">路線を追加</button>' +
-    '<p class="note">リストの<b>上にある路線ほど手前に描画</b>されます。👁で表示/非表示、🔒で編集ロック、↑↓で重ね順の変更(並べ替えても線の形は変わりません)。</p>' +
-    '<div class="subh">その他の表示</div><div class="layeropts">' +
-    `<button type="button" class="tgl showel" data-k="road" aria-pressed="${showEl(m, 'road')}">幹線道路</button>` +
-    `<button type="button" class="tgl showel" data-k="stop" aria-pressed="${showEl(m, 'stop')}">バス停</button>` +
-    `<button type="button" class="tgl showel" data-k="box" aria-pressed="${showEl(m, 'box')}">ラベル枠</button>` +
-    `<button type="button" class="tgl showel" data-k="img" aria-pressed="${showEl(m, 'img')}">画像</button>` +
-    '</div>' +
+    '</ul>' +
+    '<p class="note">リストの<b>上にある路線ほど手前に描画</b>されます。👁で表示/非表示、🔒で編集ロック、↑↓で重ね順の変更(並べ替えても線の形は変わりません)。路線の追加と種類ごとの表示ON/OFFは左のクイック操作パネルにあります。</p>' +
     '<p class="note">駅と踏切は所属する路線に従います(路線を隠すと、その路線の駅・踏切も隠れます)。</p>';
   const lineBody =
     `<div class="row"><input id="lname" value="${esc(l.name)}"><input type="color" id="lcolor" value="${l.color}"></div>` +
     `<label>線の太さ(${lw(l)})<input type="range" id="lwidth" min="2" max="24" step="1" value="${lw(l)}"></label>` +
-    `<button type="button" class="tgl" id="lloop" aria-pressed="${l.loop ? 'true' : 'false'}">環状線(最後と最初をつなぐ)</button>` +
-    `<p class="note">${l.loop ? '輪になって描画されます。閉じた区間にも駅・踏切を置けます。' : 'ONにすると最後の駅と最初の駅がつながり、輪になります(駅は3つ以上が目安)。'}</p><button id="dline">この路線を削除</button>`;
+    '<p class="note">環状線(最後と最初をつなぐ)のON/OFFは左のクイック操作パネルにあります。</p><button id="dline">この路線を削除</button>';
   const roadBody = '<ul id="roadlist">' +
     ((m.roads || []).length
       ? m.roads.map(r => `<li data-rid="${r.id}" class="${ui.sel && ui.sel.t === 'road' && ui.sel.id === r.id ? 'on' : ''}"><i style="background:${r.color}"></i>${esc(r.name)}</li>`).join('')
@@ -204,11 +194,47 @@ export function renderSide() {
     sec('map', '路線図の設定', mapBody, null);
   // 選択が変わったら「選択中」を見せるため先頭へ。開閉・トグルなどの操作は開いた位置を保つ
   side.scrollTop = selChanged ? 0 : keepScroll;
+  renderQuick();   // 左のクイック操作パネルも同じ内容で作り直す
 }
 
-/* ---------- side panel ---------- */
+/* ---------- 左パネルの横のクイック操作パネル ----------
+   よく使う操作(路線の追加・環状線・乗り換え駅(ターミナルハブ)・種類ごとの表示)を
+   右パネルから移して、開閉なしで常に並べておく。操作の本体は右パネルと同じハンドラを使う。 */
+function renderQuick() {
+  const m = curMap(), l = curLine(), q = document.getElementById('quick');
+  const keepScroll = q.scrollTop;
+  // 乗り換え駅(ターミナルハブ)の設定は、駅が選択されているときだけ出る
+  let hubBody = '<p class="note">駅(または乗り換え駅)を選ぶと、ここで乗り換え駅(ターミナルハブ)に設定できます。</p>';
+  const s = ui.sel && ui.sel.t === 'st' ? findStation(ui.sel.id) : null;
+  if (s) {
+    const ls = linesOf(s.id);   // 属する路線(乗り換え駅は0本のこともある)
+    hubBody = `<button type="button" class="tgl" id="shub" aria-pressed="${s.hub ? 'true' : 'false'}">乗り換え駅(ターミナルハブ)</button>` +
+      (s.hub ? '<div class="note" style="margin-bottom:4px">属する路線:</div>' +
+        m.lines.map(x => `<label class="qline"><input type="checkbox" class="shubline" data-lid="${x.id}"${x.stations.some(st => st.id === s.id) ? ' checked' : ''}><i style="background:${x.color}"></i><span>${esc(x.name)}</span></label>`).join('') +
+        `<p class="note">${ls.length ? 'チェックを全部外すと、どの路線にも属さない乗り換え駅(路線外)になります。' : '現在、どの路線にも属していません(路線外)。チェックした路線に組み込めます。'}</p>`
+        : '<p class="note">ONにすると、後からこの駅を乗り換え駅に変更できます(OFFで通常の駅に戻ります)。</p>');
+  }
+  q.innerHTML =
+    '<h3>路線</h3>' +
+    '<button id="addline">路線を追加</button>' +
+    `<button type="button" class="tgl" id="lloop" aria-pressed="${l.loop ? 'true' : 'false'}">環状線(最後と最初をつなぐ)</button>` +
+    `<p class="note">${l.loop ? '輪になって描画されます。閉じた区間にも駅・踏切を置けます。' : 'ONにすると最後の駅と最初の駅がつながり、輪になります(駅は3つ以上が目安)。'}</p>` +
+    '<h3>ターミナル(乗り換え駅)</h3>' + hubBody +
+    '<h3>その他の表示</h3><div class="layeropts">' +
+    `<button type="button" class="tgl showel" data-k="road" aria-pressed="${showEl(m, 'road')}">幹線道路</button>` +
+    `<button type="button" class="tgl showel" data-k="stop" aria-pressed="${showEl(m, 'stop')}">バス停</button>` +
+    `<button type="button" class="tgl showel" data-k="box" aria-pressed="${showEl(m, 'box')}">ラベル枠</button>` +
+    `<button type="button" class="tgl showel" data-k="img" aria-pressed="${showEl(m, 'img')}">画像</button>` +
+    '</div>';
+  q.scrollTop = keepScroll;
+}
+
+/* ---------- 右パネル / クイック操作パネル ---------- */
 const side = document.getElementById('side');
-side.addEventListener('input', e => {
+const quick = document.getElementById('quick');
+// 両パネルは同じ操作(トグル・チェック欄など)を持つので、同じハンドラを両方へ登録する
+const onPanel = (type, fn) => { side.addEventListener(type, fn); quick.addEventListener(type, fn); };
+onPanel('input', e => {
   const id = e.target.id, v = e.target.value, m = curMap(), l = curLine();
   if (id === 'mname') { core.update(m, { name: v }); renderTabs(); }
   else if (id === 'lname') core.update(l, { name: v });
@@ -261,7 +287,7 @@ side.addEventListener('input', e => {
   if (['mname', 'lname', 'sname', 'bsname', 'rname', 'cname', 'btext'].includes(id) || e.target.type === 'range') deferSave();
   else save();
 });
-side.addEventListener('change', e => {
+onPanel('change', e => {
   if (e.target.id === 'gap') {
     const l = curMap().lines.find(x => x.id === e.target.dataset.lid) || curLine();
     const i = l.stations.findIndex(s => s.id === ui.sel.id);
@@ -275,7 +301,7 @@ side.addEventListener('change', e => {
   }
   renderSide();
 });
-side.addEventListener('click', e => {
+onPanel('click', e => {
   const btn = e.target.closest('button'); if (btn) btn.blur();
   // --- グループの見出しクリックで開閉(開閉状態は覚えておく) ---
   const sh = e.target.closest('[data-sech]');

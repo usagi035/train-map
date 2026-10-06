@@ -56,7 +56,7 @@ function addStation(p) {
   afterAdd(); save(); renderAll();
 }
 function addHubStation(p) {
-  // どの路線にも属さない独立した乗り換え駅として置く(右パネルのチェックリストで路線に組み込める)
+  // どの路線にも属さない独立した乗り換え駅として置く(左のクイック操作パネルのチェックリストで路線に組み込める)
   const st = core.addHubStation({ map: curMap(), p, snap: snapOn() });
   ui.sel = { t: 'st', id: st.id };
   ui.tool = 'select';
