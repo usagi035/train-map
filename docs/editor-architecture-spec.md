@@ -290,6 +290,8 @@ Phase 1 以降、main にマージする前に、次を確認する(自動テス
 - Host 権限、ホスト移譲、強制退出
 - CRDT / OT などの高度な共同編集アルゴリズム
 - Web ブラウザ版(対象は Electron のみ)
+  - **追記(2026-10-07)**: 非目標であった Web 版を `docs/web-port-instruction.md`(移植指示書)に従って**実装した**。
+    ビルドなし・静的配信の構成で、Electron 関連は削除済み。詳細は `docs/decisions.md` の項目12。
 
 ---
 

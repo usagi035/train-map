@@ -15,6 +15,8 @@
 | 8 | Operation 全体の順序付け・競合解決 | 5 | 保留 |
 | 9 | 再接続・オンライン時の Undo | 7 | 保留 |
 | 10 | 画面側の分割方針(Stage C) | 1 | **決定(実装・検証済み)** |
+| 11 | よく使う操作を「左パネル横のクイック操作パネル」へ移す | 1 | **決定(実装・検証済み)** |
+| 12 | Web版(ブラウザ)への移植 | 1 | **決定(実装・検証済み)** |
 
 ---
 
@@ -137,3 +139,45 @@
   コンソールエラー0件。移動した操作(路線追加・環状線・表示トグル・ターミナルON/OFFと属する路線チェック)、
   右パネルの既存操作(開閉・行切替・👁🔒↑↓・路線名変更・間隔 `#gap`・道路ツール・駅ドラッグ・Delete・Undo/Redo・
   一覧の表示切替・選択解除時の案内文)がすべて動作。
+
+## 12. Electron 版 → Web 版(ブラウザ)への移植 → **決定(2026-10-07 実装・検証済み)**
+
+依頼は指示書 `docs/web-port-instruction.md`(元ファイル: `C:\Users\kenke\Downloads\web.md`)。
+「サーバー・インストーラー不要の純粋なフロントエンド Web アプリへ移植」。ブランチ **`deb_web-port`**。
+ロジック(`src/core/`・`src/renderer/`)は**変更せずそのまま流用**する方針(指示書 §2)。
+
+- **確認して決めた4点(質問で承認)**:
+  1. **ビルド構成 = 案A(ビルドなし・静的配信)**。指示書は案B(Vite)推奨だったが、依存ゼロ・ビルド工程なし・
+     この規模ならバンドルの恩恵が小さく、GitHub Pages にそのまま置ける点を選んだ。
+  2. **`Ctrl+W` → `Alt+W`** に変更(案A/C のうち A)。`Cmd+W` も同様に取得できないため。
+  3. **複数タブの競合制御は既存の `storage` 同期のまま**(指示書タスク3の `BroadcastChannel` + 確認ダイアログは見送り)。
+     仕様上「同期は維持、強化はしない」と整理。
+  4. **作業ブランチは `deb_web-port` を新規作成**(現行 HEAD から分岐。Electron 版は既存ブランチに残る)。
+- **タスク1(不要ファイル・依存の整理)**:
+  削除: `src/main/main.js`(= `src/main/`)、`scripts/make-uninstaller.js`、`build/uninstaller.nsi`、`scripts/up.bat`(追跡外)。
+  `package.json`: `"main"`・`devDependencies`(electron / electron-builder)・`build` 設定を削除し、
+  `scripts` を `start` / `serve` = `node scripts/serve.cjs` に変更(**依存パッケージ0**)。
+  開発用サーバーは `scripts/serve.cjs`(Node 標準のみ。`.js` を `text/javascript` で返す/パストラバーサル拒否/`PORT` 対応)。
+- **タスク2(ショートカット)**: `renderer.js` の `Ctrl+W` を `Alt+W` に変更。
+  判定は `e.altKey && (e.code === 'KeyW' || e.key.toLowerCase() === 'w')` — `e.code` は配列・OS 非依存で
+  Mac の `Option+W`(表示文字 `∫`)でも動く。タブの ✕ のツールチップも `閉じる (Alt+W)` に更新。
+- **タスク5(配信構成 = 案A)**: `src/ui/index.html` → **ルート直下の `index.html`** へ移動。
+  参照は `<script src="./src/renderer/renderer.js">` の1行だけ修正(`side-panel.js` の
+  `window.open('index.html#…')` は現在ページ基準なので変更不要)。GitHub Pages 等にリポジトリ直下をそのまま置ける。
+- **ドキュメント**: `README.md`(ヘッダ・TOC・起動方法・公開方法・保存場所・ショートカット・ファイル構成)、
+  `docs/code_Desc.md`(§0/§1/§3/§4/§6/§7)、`docs/editor-architecture-spec.md` §11 の非目標に追記、
+  `docs/web-port-instruction.md`(指示書をリポジトリへ移し替え)を更新。
+- **見送り/未実施**: ①`BroadcastChannel` によるタブ間確認ダイアログ(3.の決定による)。
+  ②GitHub Pages 等への**公開設定そのもの**(配信可能な構成にしただけで、Pages の有効化は未実施)。
+  ③追跡外の `node_modules/`(electron 入り)と `dist/`(旧ビルド成果物)は**削除していない** — 容量は大きいが
+  ユーザーのローカル成果物のため手を付けず、削除可否は要判断。
+- **検証(指示書 §5 チェックリスト / 静的サーバ `npm start` → http://localhost:8080/ で実施)**:
+  ①画面描画: `#left 0-270` / `#quick 270-452` / `#stage 452-1816` / `#side 1816-2086`、横溢れ0・コンソールエラー0。
+  ②データ保存: 駅追加で `localStorage('railmaps')` に書かれ、**リロード後も保持**(路線・画像・名前とも維持)。
+  ③Undo/Redo: `Ctrl+Z` で 1→0、`Ctrl+Y` で 0→1、`Ctrl+Shift+Z` は先頭で停止、`Ctrl+Z` で 0。
+  ④ファイル出力: JSON 書き出し `railmaps.json`(580B)取得、JSON 読み込みで `maps[0].name` がタブ表示に反映。
+  ⑤画像出力: `路線図 1.png`(image/png, 100,320B)がダウンロード。
+  ⑥画像挿入: 2000×100 の PNG を取り込むと `data:image/webp;base64,…` に**再エンコード**され、キャンバスに描画。
+  ⑦操作: `Ctrl+ホイール` で 162%→261%、`＋` で 300%、等倍で 100%。中ボタンドラッグで `scrollLeft 246→346`。
+  □ドラッグで「□で 1個を選択」→ `Esc` で解除。`Alt+W` でタブが閉じて一覧へ(クイック操作パネルも非表示)。
+  追加: クイック操作パネルの「路線を追加」(1→2本)、ネットワーク要求の404なし、`node --check` 全12ファイル合格。

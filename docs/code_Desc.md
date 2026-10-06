@@ -1,28 +1,25 @@
 # 路線図エディタ コード説明 (code_Desc.md)
 
-対象: railway-map-editor v1.0.0 / 最終更新 2026-10-07(クイック操作パネル追加に対応)
+対象: railway-map-editor v1.0.0 / 最終更新 2026-10-07(Web版移行(ビルドなし・静的配信)に対応)
 **行番号は記載時点の目安です(コードを編集するとずれます)。関数名・イベント名で検索してください。**
 
 ---
 
 ## 0. 全体像
 
-Electron 製の2プロセス構成。**データはすべて localStorage に保存**され、バックエンド(サーバ・DB)は無い。
+ビルド不要・静的配信の Web アプリ(メインプロセス無し・依存パッケージ無し)。**データはすべてブラウザの localStorage に保存**され、バックエンド(サーバ・DB)は無い。
 
 ```
-npm start
-  └─ src/main/main.js (メインプロセス)
-       ├─ requestSingleInstanceLock() … 二重起動を拒否
-       ├─ createWindow() … BrowserWindow 生成 → src/ui/index.html を読み込む
-       └─ before-input-event … Ctrl+W を「路線図タブを閉じる」に割り当て
-            └─ src/ui/index.html (画面構造 + CSS)
-             └─ <script type="module" src="../renderer/renderer.js"> … 画面側の入口
-                  ├─ renderer/ui-state.js … 共通状態・共通操作・renderAll(各画面モジュールはここからのみ import)
-                  ├─ renderer/{canvas,side-panel,left-panel,tabs}.js … 描画と各画面の操作
-                  ├─ core/{model,geometry,migration,history,operations}.js … 画面に依存しない操作(createCore)
-                  ├─ 起動時: localStorage('railmaps') 読込 → migrate() → importDocument → renderAll()
-                  ├─ 編集のたびに save() … 履歴に積み + localStorage へ書く
-                  └─ renderAll() = renderTabs / renderTools / renderCanvas / renderSide(+renderQuick) / renderLeft
+npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準のみ)
+  → http://localhost:8080/index.html (リポジトリ直下の index.html = エントリ)
+       ├─ index.html (画面構造 + CSS)
+       └─ <script type="module" src="./src/renderer/renderer.js"> … 画面側の入口
+            ├─ renderer/ui-state.js … 共通状態・共通操作・renderAll(各画面モジュールはここからのみ import)
+            ├─ renderer/{canvas,side-panel,left-panel,tabs}.js … 描画と各画面の操作
+            ├─ core/{model,geometry,migration,history,operations}.js … 画面に依存しない操作(createCore)
+            ├─ 起動時: localStorage('railmaps') 読込 → migrate() → importDocument → renderAll()
+            ├─ 編集のたびに save() … 履歴に積み + localStorage へ書く
+            └─ renderAll() = renderTabs / renderTools / renderCanvas / renderSide(+renderQuick) / renderLeft
 ```
 
 ### localStorage に保存するキー
@@ -33,8 +30,8 @@ npm start
 | `railopen` | 開いているタブの路線図ID配列 | `persistOpen()` |
 | `railacc` | 右パネル各グループの開閉状態(クイック操作パネル `#quick` は開閉を持たないため対象外) | `saveAcc()` |
 
-> **注意**: 同じ userData を2プロセスで開くとキャッシュ競合(0x5)と上書き競合が起きるため、
-> `src/main/main.js` の単一インスタンスロックで防いでいる。
+> **注意**: 同じブラウザで複数タブを開くと、最後に保存した側が勝つ(上書き競合)。これを防ぐ仕組みは無いので、
+> 保存のたびに発火する `storage` イベント(§5.14)で変更を互いに取り込む。単一インスタンスロックの代わりの制御。
 
 ---
 
@@ -42,8 +39,7 @@ npm start
 
 | ファイル | 役割 |
 | --- | --- |
-| `src/main/main.js` | Electron メインプロセス。ウィンドウ生成・Ctrl+W の割り当て・単一インスタンス制御 |
-| `src/ui/index.html` | 画面の DOM 構造と**すべての CSS**(外部スタイル無し)。CSP 指定あり |
+| `index.html` | エントリ。画面の DOM 構造と**すべての CSS**(外部スタイル無し)。CSP 指定あり。`./src/renderer/renderer.js` を ESM で読み込む |
 | `src/core/model.js` | 状態 `S` の読み書き・ID(`newId`)・定数(COLORS/G/SHAPES/…)・各オブジェクト生成・接続の掃除 |
 | `src/core/geometry.js` | 距離・区間・環状線の計算(`dist` / `project` / `keepCrossings` など) |
 | `src/core/migration.js` | 旧形式のデータを新形式へ変換する `migrate()` |
@@ -55,18 +51,17 @@ npm start
 | `src/renderer/left-panel.js` | 左パネルの描画(`renderLeft` / `stationGlyph`)と駅の並べ替え |
 | `src/renderer/tabs.js` | タブと一覧(ホーム)の描画・操作(`renderTabs` / `renderHome` / `openMap` / `closeTab` / `newMap` / `deleteMap`) |
 | `src/renderer/renderer.js` | 画面側の入口(約460行)。初期化、マウス・キー・ファイル入力、`storage` 同期、各モジュールの描画関数の登録 |
-| `package.json` | npm スクリプト(start / dist / uninstaller)と electron-builder 設定 |
-| `scripts/make-uninstaller.js` | `dist/` に「アンインストーラ .exe」を同梱するためのビルド補助 |
-| `build/uninstaller.nsi` | NSIS スクリプト(アンインストーラ生成用。上記が使用) |
+| `index.html` | 画面の HTML / CSS(ルート直下) |
+| `package.json` | npm スクリプト(`start` / `serve` = 開発用サーバー)。依存パッケージ・ビルド設定は無い |
+| `scripts/serve.cjs` | 開発用の静的サーバー(Node 標準モジュールのみ。MIME とパストラバーサル対策を持つ) |
 | `README.md` | ユーザー向けの機能・操作説明 |
 | `docs/code_Desc.md` | このファイル(コード構造の説明) |
 | `docs/AI-rule.md` | AI への作業ルール(機能追加ごとに commit / 重要な変更は `deb_*` ブランチ) |
 | `docs/*.md` | 仕様書(editor-architecture / signaling-server)、Phase 0 調査、判断記録 |
-| `scripts/up.bat` | `npm start` の一時起動用(!.gitignore 対象) |
-| `dist/`, `build/*.exe` | ビルド成果物(!.gitignore 対象。追跡しない) |
+| `dist/` | 過去の Electron 版のビルド成果物(!.gitignore 対象。追跡しない。Web 版では使わない) |
 
-> **ルート直下の追跡対象ファイルは `package.json` / `README.md` / `.gitignore` の3つ**。
-> アプリは `src/`、ドキュメントは `docs/`、補助スクリプトは `scripts/` に置く。
+> **ルート直下の追跡対象ファイルは `index.html` / `package.json` / `README.md` / `.gitignore` の4つ**。
+> アプリ本体は `src/`、ドキュメントは `docs/`、補助スクリプトは `scripts/` に置く。
 
 ---
 
@@ -111,18 +106,20 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 
 ---
 
-## 3. src/main/main.js(メインプロセス)
+## 3. index.html と起動・配信
 
 | 箇所 | 内容 |
 | --- | --- |
-| `createWindow()` | 1280×800 の BrowserWindow を生成(メニュー非表示・`contextIsolation:true`)。`src/ui/index.html` を読む。`setWindowOpenHandler` で `window.open()`(別ウィンドウで路線図を開く)を 1200×760 で許可 |
-| `app.on('browser-window-created')` | どのウィンドウでも **Ctrl+W** を横取りし `window.__closeTab()` を実行。**false(タブ無し)を返したときだけ**ウィンドウを閉じる |
-| `app.requestSingleInstanceLock()` | 2つ目を起動したら既存ウィンドウを前面に出して `app.quit()`。キャッシュ競合(0x5)と localStorage 上書きを防ぐ |
-| `app.on('window-all-closed')` | ウィンドウが無くなったら終了(Mac 的挙動はしない) |
+| `index.html`(ルート直下) | エントリ。DOM 構造 + すべての CSS + CSP。`<script type="module" src="./src/renderer/renderer.js">` で画面側を起動。`src/ui/` からルートへ移した(パスは `./src/renderer/…` に修正しただけ) |
+| 開発 | `npm start` → `scripts/serve.cjs` がリポジトリ直下を配信(`PORT` で変更可)。依存パッケージ無しだが、任意の静的サーバーでも同じ |
+| 公開 | `dist/` 等のビルド出力は無く、**リポジトリ直下そのものが配信物**。GitHub Pages 等の静的ホスティングにそのまま接続できる |
+| 複数タブ | 起動の排他制御は無い(同一 origin の localStorage を共有)。変更は `storage` イベント(§5.14)で互いに取り込む |
+| `window.open('index.html#…')`(「別ウィンドウで開く」) | ブラウザでは**別タブ**として開く。`location.hash` でその路線図だけを開く(`hm`) |
+| タブを閉じるキー | **`Alt + W`**(`renderer.js` の keydown)。`Ctrl+W` / `Cmd+W` はブラウザが先に掴むため取得できない。`e.code === 'KeyW'` で配列・OS に依存せず判定 |
 
 ---
 
-## 4. src/ui/index.html(画面構造とスタイル)
+## 4. index.html(画面構造とスタイル)
 
 ### DOM 構造
 
@@ -139,7 +136,7 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
   <aside id="side">          … 右パネル: 設定(6グループ)                  ← renderSide()
   <div id="home">            … 路線図の一覧画面                          ← renderHome()
 <div id="hint">              … ツールごとの操作ヒント(固定表示)
-<script type="module" src="../renderer/renderer.js">
+<script type="module" src="./src/renderer/renderer.js">
 ```
 
 3つのパネルは `<main>` の flex で横に並びます(左から `#left` 270px → `#quick` 182px → `#stage`(残り) → `#side` 270px)。
@@ -154,7 +151,7 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 
 > クイック操作パネルに置く4項目は**元来右パネルにあったもの**で、左へ移動しています(重複表示はしない)。
 
-### CSS のグループ(src/ui/index.html 内 `<style>`)
+### CSS のグループ(index.html 内 `<style>`)
 
 | 範囲 | 主なクラス | 内容 |
 | --- | --- | --- |
@@ -356,7 +353,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `finishBand()` | 動かさなかったクリックなら路線選択のみ。動かしていれば `pickInBox` で複数選択(`ui.bulk` に設定) |
 | `window mousemove`(drawing) | 道路描画中の予告線(`hover`) |
 | `cv dblclick` | 道路のダブルクリックで確定 |
-| `window keydown` | **Ctrl+W**=タブ閉じる / **Ctrl+Z・Ctrl+Y(Ctrl+Shift+Z)**=undo/redo(テキスト欄中は除く) / **Delete・Backspace**=削除 / **Enter**=道路確定 / **Esc**=道路中止→□解除→selectに戻る / **Space**=押下中はパンモード |
+| `window keydown` | **Alt+W**=タブ閉じる(`e.code === 'KeyW'`。Ctrl+W/Cmd+W はブラウザが先に掴むため) / **Ctrl+Z・Ctrl+Y(Ctrl+Shift+Z)**=undo/redo(テキスト欄中は除く) / **Delete・Backspace**=削除 / **Enter**=道路確定 / **Esc**=道路中止→□解除→selectに戻る / **Space**=押下中はパンモード |
 | `window keyup` | Space 解除 |
 
 #### ツールバー・ファイル
@@ -412,7 +409,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `closeTab(id)` | タブを閉じる。閉じたのが表示中なら隣へ移動、無ければ一覧へ |
 | `newMap()` | 「路線図 N+1」を作成して開く |
 | `deleteMap(id)` | 路線図を削除(**先に `save()` してから表示を切り替える** = 履歴で復元可能)。全部消えたら空の路線図を1枚用意 |
-| `window.__closeTab()` | **`src/main/main.js` の Ctrl+W から呼ばれる**。true=タブを閉じた / false=もう無いのでウィンドウを閉めてよい |
+| `window.__closeTab()` | **`renderer.js` の Alt+W から呼ばれる**。true=タブを閉じた / false=もう無いのでウィンドウを閉めてよい(別タブで開いた場合はブラウザが閉じる。通常のタブでは `window.close()` は無視される) |
 
 ### 5.14 ほかのウィンドウとの同期(L1687〜1706)
 
@@ -422,27 +419,26 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 
 ---
 
-## 6. scripts/make-uninstaller.js
+## 6. scripts/serve.cjs(開発用の静的サーバー)
 
-`npm run dist` の後に呼ばれ、NSIS のアンインストーラを `dist/` に同梱する。
+`npm start` で起動する、依存パッケージなしの最小な静的サーバー。**リポジトリ直下をそのまま配信**するので、公開先(静的ホスティング)と同じ条件で確認できる。
 
-| 関数 | 動作 |
+| 箇所 | 動作 |
 | --- | --- |
-| `findMakensis()` | electron-builder のキャッシュ(`%LOCALAPPDATA%` 等の `nsis*` フォルダ)から `makensis.exe` を探す |
-| `main()` | ①`build/uninstaller.nsi` を makensis でビルド → ②生成されたインストーラを `/S`(サイレント)で1回実行し、**WriteUninstaller が書いたアンインストーラを `%TEMP%` から回収** → ③`dist/Uninstall RailwayMapEditor.exe` へコピー → ④一時フォルダを掃除。makensis が無い場合は**警告を出してスキップ**(エラーにしない) |
+| `TYPES` | 拡張子 → MIME。**`.js` は `text/javascript`** にして ESM が読めるようにする(`.mjs` 同様) |
+| ルート(`/`) | `index.html` を返す |
+| パス | `decodeURIComponent` + `path.resolve` で**ルート外へ出ていくパスを拒否**(403) |
+| `PORT` | 環境変数 `PORT` で変更可(既定 8080) |
 
 ---
 
-## 7. ビルド・実行方法
+## 7. 起動・公開方法(ビルドは無い)
 
-| コマンド | 内容 |
+| 操作 | 方法 |
 | --- | --- |
-| `npm.cmd start` | 開発実行(`electron .`)※ `npm` 自体はポリシーで弾かれるため `npm.cmd` を使う |
-| `npm.cmd run dist` | electron-builder(Win: nsis + portable)→ `scripts/make-uninstaller.js` |
-| `npm.cmd run uninstaller` | アンインストーラ生成のみ |
-
-出力は `dist/`(追跡外)。同梱ファイルは `src/` 以下すべて(`package.json` の `files`)。
-インストール先は `%LOCALAPPDATA%\Programs\railway-map-editor`、データは `%APPDATA%\railway-map-editor`(localStorage)。
+| 開発 | `npm start` → <http://localhost:8080/>。`npm install` 不要(依存ゼロ) |
+| 公開 | ビルド出力は作らない。**リポジトリ直下(`index.html` と `src/`)をそのまま静的ホスティングへ**置くだけ |
+| データ | ブラウザの localStorage(= **origin 単位**)。開発中(`localhost:8080`)と公開先ではデータは別物 |
 
 ---
 
