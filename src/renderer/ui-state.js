@@ -233,8 +233,14 @@ export function del() {
   delOne(ui.sel);
   ui.sel = null; save(); renderAll();
 }
-// グリッドスナップのON/OFF(設定は画面側のチェックボックス)
-export const snapOn = () => document.getElementById('snap').checked;
+/* ---------- クイック操作パネルの2つの設定(画面だけの状態・保存しない) ----------
+   もとはツールバーのチェックボックス(#snap / #autosel)。クイック操作パネルは描き直しが多いので、
+   値の本体は DOM ではなくここに持たせ、renderQuick() がその都度 checked に反映する。 */
+let snapSetting = true, autoselSetting = true;
+export const snapOn = () => snapSetting;         // グリッドに合わせる
+export const autoselOn = () => autoselSetting;   // 追加後に選択へ戻る
+export const setSnap = v => { snapSetting = !!v; };
+export const setAutosel = v => { autoselSetting = !!v; };
 export const snapPt = p => snapOn() ? { x: Math.round(p.x / G) * G, y: Math.round(p.y / G) * G } : p;
 /* ---------- 「画像を変更」で差し替える対象(未指定なら新規追加) ---------- */
 // 右パネルが指定し、ツールバー側の読み込みが受け取る(2つのモジュールが共有する小さな状態)

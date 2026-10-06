@@ -7,7 +7,7 @@ import { dist } from '../core/geometry.js';
 import { core, ui, replaceUi, esc, curMap, curLine, findStation, linesOf, viewNow, updateUndoButtons,
          setRender,
          save, getBulk, clearBulk, rectOf, pickInBox, isStationLocked, hitLocked, lineEditBlocked,
-         snapOn, snapPt, renderAll, renderTools, del, cancelRoad, finishRoad, startRoadDrawing,
+         snapOn, autoselOn, snapPt, renderAll, renderTools, del, cancelRoad, finishRoad, startRoadDrawing,
          addRoadPoint, updateRoadHint, imgPick } from './ui-state.js';
 import { cv, stage, pt, setZoom, renderCanvas, setBandSource } from './canvas.js';
 import { renderSide } from './side-panel.js';
@@ -82,7 +82,7 @@ function addCrossing(p) {
   afterAdd(); save(); renderAll();
 }
 
-function afterAdd() { if (document.getElementById('autosel').checked) ui.tool = 'select'; }
+function afterAdd() { if (autoselOn()) ui.tool = 'select'; }   // 追加後に選択へ戻る(クイック操作パネルのスイッチ)
 
 stage.addEventListener('wheel', e => {
   if (!(e.ctrlKey || e.metaKey)) return;

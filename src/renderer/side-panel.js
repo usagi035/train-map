@@ -6,7 +6,8 @@
 import { G, SHAPES, STOP_KINDS, STOP_COLOR, OFF_LINK, BG, lw, allStations, linksIn, linkGroups } from '../core/model.js';
 import { dist, isLoop } from '../core/geometry.js';
 import { core, ui, esc, curMap, curLine, findStation, linesOf, save, deferSave, renderAll, renderTools,
-         getBulk, clearBulk, showEl, selVisible, del, finishRoad, startRoadDrawing, imgPick } from './ui-state.js';
+         getBulk, clearBulk, showEl, selVisible, del, finishRoad, startRoadDrawing, imgPick,
+         snapOn, autoselOn, setSnap, setAutosel } from './ui-state.js';
 import { renderCanvas } from './canvas.js';
 import { renderTabs, deleteMap } from './tabs.js';
 
@@ -198,8 +199,16 @@ export function renderSide() {
 }
 
 /* ---------- 左パネルの横のクイック操作パネル ----------
-   よく使う操作(路線の追加・環状線・乗り換え駅(ターミナルハブ)・種類ごとの表示)を
-   右パネルから移して、開閉なしで常に並べておく。操作の本体は右パネルと同じハンドラを使う。 */
+   よく使う操作(路線の追加・環状線・乗り換え駅(ターミナルハブ)・種類ごとの表示・スナップなど)を
+   開閉なしで常に並べておく。操作の本体は右パネルと同じハンドラ(→ change)を使う。 */
+
+/* トグルスイッチ1行(左に文言、右にスイッチ)。ON/OFF の値は毎回データから描き直すので
+   checked は毎回渡す。id(認識用)と data-k(表示切替の種類)は任意。 */
+const sw = (label, checked, opts = {}) =>
+  `<label class="qsw"${opts.title ? ` title="${esc(opts.title)}"` : ''}><span>${label}</span>` +
+  `<input type="checkbox" class="swin${opts.k ? ' showel' : ''}"${opts.id ? ` id="${opts.id}"` : ''}` +
+  `${opts.k ? ` data-k="${opts.k}"` : ''}${checked ? ' checked' : ''}><span class="track"></span></label>`;
+
 function renderQuick() {
   const m = curMap(), l = curLine(), q = document.getElementById('quick');
   const keepScroll = q.scrollTop;
@@ -208,7 +217,7 @@ function renderQuick() {
   const s = ui.sel && ui.sel.t === 'st' ? findStation(ui.sel.id) : null;
   if (s) {
     const ls = linesOf(s.id);   // 属する路線(乗り換え駅は0本のこともある)
-    hubBody = `<button type="button" class="tgl" id="shub" aria-pressed="${s.hub ? 'true' : 'false'}">乗り換え駅(ターミナルハブ)</button>` +
+    hubBody = sw('乗り換え駅(ターミナルハブ)', s.hub, { id: 'shub' }) +
       (s.hub ? '<div class="note" style="margin-bottom:4px">属する路線:</div>' +
         m.lines.map(x => `<label class="qline"><input type="checkbox" class="shubline" data-lid="${x.id}"${x.stations.some(st => st.id === s.id) ? ' checked' : ''}><i style="background:${x.color}"></i><span>${esc(x.name)}</span></label>`).join('') +
         `<p class="note">${ls.length ? 'チェックを全部外すと、どの路線にも属さない乗り換え駅(路線外)になります。' : '現在、どの路線にも属していません(路線外)。チェックした路線に組み込めます。'}</p>`
@@ -216,15 +225,17 @@ function renderQuick() {
   }
   q.innerHTML =
     '<h3>路線</h3>' +
+    sw('グリッドに合わせる', snapOn(), { id: 'snap', title: '駅・踏切などを置くとき、位置をグリッド(20マス)に合わせます' }) +
+    sw('追加後に選択へ戻る', autoselOn(), { id: 'autosel', title: '駅などを追加したら、その場で「選択・移動」モードに戻ります' }) +
     '<button id="addline">路線を追加</button>' +
-    `<button type="button" class="tgl" id="lloop" aria-pressed="${l.loop ? 'true' : 'false'}">環状線(最後と最初をつなぐ)</button>` +
+    sw('環状線(最後と最初をつなぐ)', l.loop, { id: 'lloop', title: 'ONにすると最後の駅と最初の駅がつながって、輪になります' }) +
     `<p class="note">${l.loop ? '輪になって描画されます。閉じた区間にも駅・踏切を置けます。' : 'ONにすると最後の駅と最初の駅がつながり、輪になります(駅は3つ以上が目安)。'}</p>` +
     '<h3>ターミナル(乗り換え駅)</h3>' + hubBody +
     '<h3>その他の表示</h3><div class="layeropts">' +
-    `<button type="button" class="tgl showel" data-k="road" aria-pressed="${showEl(m, 'road')}">幹線道路</button>` +
-    `<button type="button" class="tgl showel" data-k="stop" aria-pressed="${showEl(m, 'stop')}">バス停</button>` +
-    `<button type="button" class="tgl showel" data-k="box" aria-pressed="${showEl(m, 'box')}">ラベル枠</button>` +
-    `<button type="button" class="tgl showel" data-k="img" aria-pressed="${showEl(m, 'img')}">画像</button>` +
+    sw('幹線道路', showEl(m, 'road'), { k: 'road' }) +
+    sw('バス停', showEl(m, 'stop'), { k: 'stop' }) +
+    sw('ラベル枠', showEl(m, 'box'), { k: 'box' }) +
+    sw('画像', showEl(m, 'img'), { k: 'img' }) +
     '</div>';
   q.scrollTop = keepScroll;
 }
@@ -235,6 +246,7 @@ const quick = document.getElementById('quick');
 // 両パネルは同じ操作(トグル・チェック欄など)を持つので、同じハンドラを両方へ登録する
 const onPanel = (type, fn) => { side.addEventListener(type, fn); quick.addEventListener(type, fn); };
 onPanel('input', e => {
+  if (e.target.classList && e.target.classList.contains('swin')) return;   // トグルスイッチは change 側でまとめて処理(履歴の重複を避ける)
   const id = e.target.id, v = e.target.value, m = curMap(), l = curLine();
   if (id === 'mname') { core.update(m, { name: v }); renderTabs(); }
   else if (id === 'lname') core.update(l, { name: v });
@@ -299,6 +311,26 @@ onPanel('change', e => {
     if (e.target.id === 'bw') core.update(b, { w: v }); else core.update(b, { h: v });
     save(); renderAll(); return;
   }
+  // --- トグルスイッチ(左に文言・右にスイッチ)。表示はデータから描き直されるので checked は信用せず、
+  //     「いま切り替わった結果」だけを反映する ---
+  if (e.target.classList && e.target.classList.contains('swin')) {
+    const t = e.target;
+    if (t.id === 'snap') { setSnap(t.checked); return; }              // グリッドに合わせる(画面だけの設定)
+    if (t.id === 'autosel') { setAutosel(t.checked); return; }        // 追加後に選択へ戻る(画面だけの設定)
+    if (t.id === 'lloop') { core.toggleLoop(curLine()); save(); renderAll(); return; }
+    if (t.id === 'shub') {
+      const s = findStation(ui.sel && ui.sel.id);
+      if (s) { setHub(s, t.checked); save(); renderAll(); }
+      return;
+    }
+    if (t.dataset.k) {   // layer visibility on/off (show road / stop / box / img)
+      core.toggleShow(curMap(), t.dataset.k);
+      clearBulk();   // 表示設定が変わるので□選択は解除
+      if (ui.sel && !selVisible(ui.sel)) ui.sel = null;
+      save(); renderAll();
+      return;
+    }
+  }
   renderSide();
 });
 onPanel('click', e => {
@@ -330,23 +362,7 @@ onPanel('click', e => {
   }
   if (li) { ui.line = li.dataset.id; ui.sel = null; clearBulk(); renderAll(); }
   else if (rli) { ui.sel = { t: 'road', id: rli.dataset.rid }; ui.tool = 'select'; renderAll(); }
-  // --- トグルボタン(単一のON/OFF)。表示は aria-pressed の付け替えで切り替える ---
-  else if (e.target.classList && e.target.classList.contains('showel')) {
-    // 種類ごとの表示/非表示(レイヤー)。値はデータから反転する
-    core.toggleShow(m, e.target.dataset.k);
-    clearBulk();   // 表示設定が変わるので□選択は解除
-    if (ui.sel && !selVisible(ui.sel)) ui.sel = null;
-    save(); renderAll();
-  }
-  else if (id === 'shub') {
-    const s = findStation(ui.sel && ui.sel.id);
-    if (s) { setHub(s, !s.hub); save(); renderAll(); }
-  }
-  else if (id === 'lloop') {
-    // 閉じる/開くで区間の数が変わるため、切り替え前の踏切の位置を基準に付け直す
-    core.toggleLoop(curLine());
-    save(); renderAll();
-  }
+  // (トグルスイッチの showel / shub / lloop は change 側で処理する)
   else if (id === 'addimgp') { imgPick.replaceId = null; document.getElementById('imgfile').click(); }
   else if (e.target.closest && e.target.closest('#imglist li[data-iid]')) {
     // 画像は下敷きだとクリックで選択できないことがあるので、一覧からも選べるようにする

@@ -126,12 +126,12 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 ```html
 <header>
   <div id="tabs">            … 路線図タブ + 「＋」(追加) + 「一覧」     ← renderTabs()
-  <div id="tools">           … ツールバー。data-tool ボタン群、#snap/#autosel、
+  <div id="tools">           … ツールバー。data-tool ボタン群、
                                 #del #undo #redo、ズーム、#exp #imp #expimg、
                                 非表示の #file(JSON) と #imgfile(画像)
 <main>
   <aside id="left">          … 左パネル: 選択中の路線の駅リスト(並べ替え) ← renderLeft()
-  <aside id="quick">         … クイック操作パネル(路線追加・環状線・ターミナル設定・その他の表示) ← renderQuick()
+  <aside id="quick">         … クイック操作パネル(スナップ・選択へ戻る・路線追加・環状線・ターミナル設定・その他の表示) ← renderQuick()
   <div id="stage"><svg id="cv"> … 描画キャンバス(SVG)                    ← renderCanvas()
   <aside id="side">          … 右パネル: 設定(6グループ)                  ← renderSide()
   <div id="home">            … 路線図の一覧画面                          ← renderHome()
@@ -145,11 +145,11 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 | 列 | 幅 | 中身 | 描画 |
 | --- | --- | --- | --- |
 | `#left` 左パネル | 270px | 選択中の路線の駅リスト(経路順・↑↓・ドラッグ並べ替え) | `renderLeft()` |
-| `#quick` クイック操作パネル | 182px | **路線**(路線を追加・環状線トグル) / **ターミナル(乗り換え駅)**(トグルと属する路線チェック) / **その他の表示**(4トグル)。開閉なしの常設列 | `renderQuick()` |
+| `#quick` クイック操作パネル | 182px | **路線**(`#snap` グリッドに合わせる・`#autosel` 追加後に選択へ戻る・路線を追加・`#lloop` 環状線) / **ターミナル(乗り換え駅)**(`#shub` と属する路線チェック) / **その他の表示**(`.showel` 4スイッチ)。開閉なしの常設列 | `renderQuick()` |
 | `#stage` | 残り | SVG キャンバス | `renderCanvas()` |
 | `#side` 右パネル | 270px | 開閉できる6グループ(選択中 / 路線(レイヤー) / 選択中の路線 / 幹線道路 / 画像 / 路線図の設定) | `renderSide()` |
 
-> クイック操作パネルに置く4項目は**元来右パネルにあったもの**で、左へ移動しています(重複表示はしない)。
+> クイック操作パネルに置く項目のうち4つ(環状線・乗り換え駅・その他の表示4つ)は**元来右パネルにあったもの**で、左へ移動しています(重複表示はしない)。「グリッドに合わせる」「追加後に選択へ戻る」の2つは**元来ツールバーにあったチェックボックス**の移動です。
 
 ### CSS のグループ(index.html 内 `<style>`)
 
@@ -161,9 +161,9 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 | パネル共通 | `aside label` / `.row` / `.note` | ラベル・横並び行・補足文 |
 | 左右リスト | `#lines` `#roadlist` `#imglist` `.linklist` | 行・選択 `.on`・ハンドル `.lhandle` |
 | レイヤー操作 | `#lines .lyr` / `.lyr:disabled` / `#lines li.off` | 👁🔒↑↓ ボタン、非表示行の薄表示 |
-| **トグルボタン** | `.tgl` / `[aria-pressed="true"]` | ピル型。ON=緑点灯+白ドット、OFF=グレーのドット。単一ON/OFF項目に使用 |
+| **トグルスイッチ** | `#quick .qsw` / `.track` / `input:checked + .track` | 左に文言・右にレール型スイッチ。ON=緑・OFF=グレー、スライダーが右へ送られる。中身は `checkbox`(`.swin`)なので判定は従来のチェックボックスと同じ。単一ON/OFF項目に使用 |
 | 右パネルのグループ | `.sec` `.sech` `.sect` `.secn` `.seci` `.secb` `.subh` | 開閉セクション(見出し=ボタン、`▾`回転、バッジ `.secn`) |
-| クイック操作パネル | `#quick h3` / `#quick .qline` / `#quick .tgl` | 左パネル右の常設列(幅182px、開閉なし)。破線で区切る見出し、幅いっぱいのトグル、属する路線のチェック行(路線名は省略記号) |
+| クイック操作パネル | `#quick h3` / `#quick .qline` / `#quick .qsw` | 左パネル右の常設列(幅182px、開閉なし)。破線で区切る見出し、幅いっぱいのスイッチ行、属する路線のチェック行(路線名は省略記号) |
 | 接続リスト | `.linkgroup` / `.linklist` / `.badge` | 路線ごとの「接続する駅」 |
 | ヒント | `#hint` | 左下に固定 |
 
@@ -304,7 +304,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | └ 内部 `xf(l,c)` / `dims(l)` | 踏切の位置と回転(線の接線方向)/ 踏切バーの寸法 |
 | `sec(id, title, body, badge)` | 右パネルの開閉セクションHTML(`aria-expanded` 付き見出し + バッジ + `▾`) |
 | `renderSide()` | 右パネルを生成。**6グループ**: ①`sel` 選択中の要素(駅/乗り換え駅/バス停/道路/ラベル枠/画像/踏切/□選択) ②`lines` 路線(レイヤー) ③`line` 選択中の路線(名前・色・太さ・削除) ④`roads` ⑤`images` ⑥`map` 路線図の設定。**選択が変わったら `sel` を自動で開き先頭へスクロール、それ以外は開いた位置を維持**(`keepScroll`)。末尾で `renderQuick()` も作り直す |
-| └ 内部 `renderQuick()` | 左のクイック操作パネル(`#quick`)。開閉なしの3見出し: **路線**(`#addline` 路線を追加、`#lloop` 環状線トグル) / **ターミナル(乗り換え駅)**(`#shub` トグルと `.shubline` の属する路線チェック。`ui.sel.t==='st'` のときだけ、それ以外は案内文) / **その他の表示**(`.showel` 4トグル)。右パネルから移動した項目 |
+| └ 内部 `renderQuick()` | 左のクイック操作パネル(`#quick`)。開閉なしの3見出し: **路線**(`#snap` グリッドに合わせる・`#autosel` 追加後に選択へ戻るのスイッチ → `#addline` 路線を追加 → `#lloop` 環状線スイッチ + 補足文) / **ターミナル(乗り換え駅)**(`#shub` スイッチと `.shubline` の属する路線チェック。`ui.sel.t==='st'` のときだけ、それ以外は案内文) / **その他の表示**(`.showel` 4スイッチ)。右パネルから移動した項目。スイッチの HTML は共通ヘルパー `sw(label, checked, opts)` が生成し、`checked` は毎回データ(=`snapOn()`/`autoselOn()`/`l.loop`/`s.hub`/`showEl()`)から描き直す |
 | `stationGlyph(s, l)` | 左パネル用の小さい駅シンボル(SVG) |
 | `renderLeft()` | 左パネル: 選択中の路線の駅を**経路順**に並べる(並べ替えハンドル・↑↓・「乗」バッジ・非表示/ロック表示) |
 | `moveStation(l, from, to)` | 駅の並べ替え。`keepCrossings` で踏切位置を保持 → `save()`+`renderAll()` |
@@ -333,8 +333,9 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | 関数/定数 | 動作 |
 | --- | --- |
 | `pt(e)` | クライアント座標 → SVG座標(zoom を割る) |
-| `snapPt(p)` | 「グリッドに合わせる」ON なら20px単位に丸める |
-| `afterAdd()` | 「追加後に選択へ戻る」ON ならツールを select に戻す |
+| `snapPt(p)` | 「グリッドに合わせる」(`snapOn()`=`ui-state.js` の画面側設定)ON なら20px単位に丸める |
+| `afterAdd()` | 「追加後に選択へ戻る」(`autoselOn()`)ON ならツールを select に戻す |
+| `snapOn()` / `autoselOn()`<br>`setSnap(v)` / `setAutosel(v)` | クイック操作パネルの2つのスイッチの状態。**画面だけの状態(セッション中有効・保存しない)**。DOM ではなく `ui-state.js` のモジュール変数に持つ(パネルは再描画されるため) |
 | `snapCx(l, r)` | 踏切の位置をグリッド点へ合わせて再計算(`seg`/`t` を返す) |
 | `applyZoom()` | SVG の `width/height/viewBox` とズームラベル(%)を更新 |
 | `setZoom(z, cx, cy)` | 0.25〜3に丸め、**指定した画面位置を固定したまま倍率変更** |
@@ -367,14 +368,16 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 #### 右パネル `#side` / クイック操作パネル `#quick`
 
 `input` / `change` / `click` は `onPanel(type, fn)` で **`#side` と `#quick` の両方**へ登録している(同じハンドラを共有)。
-`#shub`・`#lloop`・`#addline`・`.showel`・`.shubline` は `#quick` 側の要素で、それ以外は `#side` 側の要素。
+`#snap`・`#autosel`・`#shub`・`#lloop`・`#addline`・`.showel`・`.shubline` は `#quick` 側の要素で、それ以外は `#side` 側の要素。
 ドラッグ(`.linklist`)と `.linksel` の `change` は `#side` だけ。
+
+トグルスイッチ(`.swin` = トグルスイッチの中身の checkbox)は、**クリックを受けるのは `change` だけ**(`input` は先頭で return して、`save()` が二重に走らないようにしている)。表示はデータから毎回描き直されるので、`checked` は「これから反映する結果」としてだけ使う。
 
 | 箇所 | 動作 |
 | --- | --- |
-| `input` イベント | 全入力欄の分岐: `mname/lname/lcolor/lwidth`(路線)、`mbg`(背景)、`sname/sshape/scolor/snameRot`(駅)、`cname`(踏切)、`bsname/bskind/bscolor/bsnameRot`(バス停)、`rname/rcolor/rwidth`(道路)、`btext/bfill`(ラベル枠)、`iop/izone`(画像不透明度・重ね順)。**`.shubline`(属する路線のチェック)**: チェックで路線に組み込み `hubs` から外す(初めて乗る路線なら「路線外」の接続を移す)、外すとどの路線にも無くなったら **`m.hubs` へ戻して消さない**+`flattenLinks()`。末尾: 文字入力とスライダーは `deferSave()`、他は `save()` |
-| `change` イベント | `#gap`(前の駅との間隔)…**これ以降の駅も一緒に動かす** / `#bw` `#bh`(ラベル枠のサイズ)。それ以外は `renderSide()` で再描画 |
-| `click` イベント | 見出し `[data-sech]` で開閉(`railacc` に記憶) → `.lyr`(**👁表示/非表示・🔒ロック・↑↓重ね順**。表示設定が変わったら□選択解除・見えない選択解除) → 路線行(`ui.line` 切替) → 道路行(選択) → **`.showel` トグル(種類ごとの表示・データから反転)** → **`#shub` トグル(乗り換え駅ON/OFF→`setHub`)** → **`#lloop` トグル(環状線ON/OFF・踏切を再射影)** → 画像行(選択) → `sreset`/`bsreset`(色を初期値へ) → `droad`/`idel`/`ichg` → 接続リストの `lup`/`ldown`/`ldel`(↑↓・削除) → 接続行のクリック(**その駅を選択してパネル切替**) → `newwin`(別ウィンドウ) → `addline`(路線追加) → `addroadp`(道路描画へ) → `dline`(路線削除。**消える路線にしか無かった乗り換え駅は `hubs` に残し、路線ごとの接続は掃除**) → `dmap`(路線図削除)。**※ `.showel`・`#shub`・`#lloop`・`#addline` は `#quick` 側の要素** |
+| `input` イベント | 先頭で **`.swin`(トグルスイッチ)は return**(スイッチの操作は `change` 側でまとめて処理し、`save()` の二重発火を防ぐ)。続いて全入力欄の分岐: `mname/lname/lcolor/lwidth`(路線)、`mbg`(背景)、`sname/sshape/scolor/snameRot`(駅)、`cname`(踏切)、`bsname/bskind/bscolor/bsnameRot`(バス停)、`rname/rcolor/rwidth`(道路)、`btext/bfill`(ラベル枠)、`iop/izone`(画像不透明度・重ね順)。**`.shubline`(属する路線のチェック)**: チェックで路線に組み込み `hubs` から外す(初めて乗る路線なら「路線外」の接続を移す)、外すとどの路線にも無くなったら **`m.hubs` へ戻して消さない**+`flattenLinks()`。末尾: 文字入力とスライダーは `deferSave()`、他は `save()` |
+| `change` イベント | `#gap`(前の駅との間隔)…**これ以降の駅も一緒に動かす** / `#bw` `#bh`(ラベル枠のサイズ) / **トグルスイッチ `.swin`**: `#snap`→`setSnap()`、`#autosel`→`setAutosel()`(どちらも履歴に残らない画面だけの設定)、`#lloop`→`core.toggleLoop()`、`#shub`→`setHub(s, checked)`、`data-k` あり→`core.toggleShow()`(+□選択解除・見えない選択解除)。いずれも `save()`+`renderAll()` でデータ側を反転し、表示は描き直しで追随。それ以外は `renderSide()` で再描画 |
+| `click` イベント | 見出し `[data-sech]` で開閉(`railacc` に記憶) → `.lyr`(**👁表示/非表示・🔒ロック・↑↓重ね順**。表示設定が変わったら□選択解除・見えない選択解除) → 路線行(`ui.line` 切替) → 道路行(選択) → 画像行(選択) → `sreset`/`bsreset`(色を初期値へ) → `droad`/`idel`/`ichg` → 接続リストの `lup`/`ldown`/`ldel`(↑↓・削除) → 接続行のクリック(**その駅を選択してパネル切替**) → `newwin`(別ウィンドウ) → `addline`(路線追加) → `addroadp`(道路描画へ) → `dline`(路線削除。**消える路線にしか無かった乗り換え駅は `hubs` に残し、路線ごとの接続は掃除**) → `dmap`(路線図削除)。**※ `.showel`・`#shub`・`#lloop`・`#snap`・`#autosel` は `#quick` 側の要素で、スイッチなので `click` では処理しない(`change` 参照)** |
 | `dragstart/over/drop/dragend` | 接続リストのドラッグ並べ替え(**同じリストの中だけ**可) |
 | `change`(`.linksel`) | 接続先セレクトで駅を選ぶと**その場で追加**(重複は無視)。追加ボタンは無い |
 
@@ -459,3 +462,6 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
    `#side` と `#quick` の両方に `input` / `change` / `click` を登録する。ID・クラスは移動前と同一なので
    分岐ロジックは共通のまま。ドラッグ(`.linklist`)と `.linksel` の `change` は `#side` のみに登録する。
    描画は `renderSide()` の末尾で `renderQuick()` を呼ぶため、`renderSide()` を呼ぶ呼び出し側は変更不要。
+   **トグルスイッチ(`.swin`)だけは例外**で、処理は `change`(=`input` は先頭で return)に置く。表示は毎回
+   データから描き直されるので、ON/OFF の値を DOM に持たせない(`#snap`/`#autosel` は `ui-state.js` の
+   `snapSetting`/`autoselSetting` に保持し、`renderQuick()` がその都度 `checked` に反映する)。

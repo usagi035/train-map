@@ -46,9 +46,7 @@
   #quick h3 { margin:14px 0 7px; font-size:12.5px; border-top:1px dashed var(--rule); padding-top:11px; }
   #quick h3:first-child { margin-top:0; border-top:0; padding-top:0; }
   #quick > button { display:block; width:100%; margin-bottom:7px; }
-  #quick .tgl { display:flex; width:100%; white-space:normal; text-align:left; margin-bottom:6px; }
   #quick .layeropts { grid-template-columns:1fr; gap:6px; margin-bottom:0; }
-  #quick .layeropts .tgl { margin-bottom:0; }
   #quick .qline { display:flex; align-items:center; gap:6px; margin-bottom:4px; font-size:12.5px; color:var(--ink); }
   #quick .qline input { flex:none; }
   #quick .qline i { display:inline-block; width:18px; height:5px; border-radius:3px; flex:none; }
@@ -81,15 +79,22 @@
   #lines .lyr:disabled { opacity:.35; cursor:default; }
   #lines .lyr:disabled:hover { background:#fff; }
   .layeropts { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px; }
-  /* トグルボタン(単一のON/OFF。チェックボックスの代わりに使う) */
-  .tgl { display:inline-flex; align-items:center; justify-content:flex-start; gap:6px; padding:5px 11px;
-         font-size:12.5px; font-weight:700; color:#5c6f77; background:#fff;
-         border:1px solid #b9c4c1; border-radius:15px; cursor:pointer; white-space:nowrap; }
-  .tgl::before { content:""; flex:none; width:8px; height:8px; border-radius:50%; background:#d5dedb; }
-  .tgl:hover { background:#eaf0ee; }
-  .tgl[aria-pressed="true"] { color:#fff; background:var(--signal); border-color:#186f4a; }
-  .tgl[aria-pressed="true"]::before { background:#fff; }
-  .tgl[aria-pressed="true"]:hover { background:#1a7a50; }
+  /* トグルスイッチ(クイック操作パネルのON/OFF。左に文言、右にスイッチ)。
+     中身は checkbox なので、値の判定と保存は従来のチェックボックスと同じ仕組みで動く */
+  #quick .qsw { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px;
+                font-size:12.5px; color:var(--ink); cursor:pointer; }
+  #quick .qsw > span:first-child { flex:1; min-width:0; }
+  #quick .qsw input { position:absolute; opacity:0; width:0; height:0; margin:0; padding:0; border:0; }
+  #quick .qsw .track { position:relative; flex:none; width:34px; height:19px; border-radius:10px;
+                       background:#c4cfcb; transition:background .15s ease; }
+  #quick .qsw .track::after { content:""; position:absolute; top:2px; left:2px; width:15px; height:15px;
+                              border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.3);
+                              transition:transform .15s ease; }
+  #quick .qsw input:checked + .track { background:var(--signal); }
+  #quick .qsw input:checked + .track::after { transform:translateX(15px); }
+  #quick .qsw:hover .track { filter:brightness(.97); }
+  #quick .qsw input:focus-visible + .track { outline:2px solid #4a8fd4; outline-offset:2px; }
+  #quick .layeropts .qsw { margin-bottom:0; }
   /* 右パネルのグループ(見出しクリックで開閉するセクション) */
   .sec { border:1px solid #dde6e3; border-radius:7px; background:#fff; margin-bottom:8px; overflow:hidden; }
   .sech { display:flex; align-items:center; gap:7px; width:100%; padding:7px 9px; background:#eef3f1; border:0; font-size:13px; font-weight:700; color:#2b3a41; text-align:left; cursor:pointer; }
@@ -137,8 +142,6 @@
     <button data-tool="road" title="クリックで頂点を追加して道路を引く">幹線道路を引く</button>
     <button data-tool="box">ラベル枠を追加</button>
     <button id="addimg" title="画像ファイル(PNG・JPGなど)を配置して、移動・リサイズ・下敷きができます">画像を追加</button>
-    <label><input type="checkbox" id="snap" checked> グリッドに合わせる</label>
-    <label><input type="checkbox" id="autosel" checked> 追加後に選択へ戻る</label>
     <button id="del">選択を削除</button>
     <button id="undo" title="元に戻す (Ctrl+Z)">↶ 元に戻す</button>
     <button id="redo" title="やり直す (Ctrl+Y / Ctrl+Shift+Z)">↷ やり直す</button>
