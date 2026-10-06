@@ -1,6 +1,6 @@
 # 路線図エディタ コード説明 (code_Desc.md)
 
-対象: railway-map-editor v1.0.0 / 最終更新 2026-10-05
+対象: railway-map-editor v1.0.0 / 最終更新 2026-10-07(クイック操作パネル追加に対応)
 **行番号は記載時点の目安です(コードを編集するとずれます)。関数名・イベント名で検索してください。**
 
 ---
@@ -22,7 +22,7 @@ npm start
                   ├─ core/{model,geometry,migration,history,operations}.js … 画面に依存しない操作(createCore)
                   ├─ 起動時: localStorage('railmaps') 読込 → migrate() → importDocument → renderAll()
                   ├─ 編集のたびに save() … 履歴に積み + localStorage へ書く
-                  └─ renderAll() = renderTabs / renderTools / renderCanvas / renderSide / renderLeft
+                  └─ renderAll() = renderTabs / renderTools / renderCanvas / renderSide(+renderQuick) / renderLeft
 ```
 
 ### localStorage に保存するキー
@@ -31,7 +31,7 @@ npm start
 | --- | --- | --- |
 | `railmaps` | 全路線図データ `S`(1つの JSON) | `save()` / `applySnap()` |
 | `railopen` | 開いているタブの路線図ID配列 | `persistOpen()` |
-| `railacc` | 右パネル各グループの開閉状態 | `saveAcc()` |
+| `railacc` | 右パネル各グループの開閉状態(クイック操作パネル `#quick` は開閉を持たないため対象外) | `saveAcc()` |
 
 > **注意**: 同じ userData を2プロセスで開くとキャッシュ競合(0x5)と上書き競合が起きるため、
 > `src/main/main.js` の単一インスタンスロックで防いでいる。
@@ -142,6 +142,18 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 <script type="module" src="../renderer/renderer.js">
 ```
 
+3つのパネルは `<main>` の flex で横に並びます(左から `#left` 270px → `#quick` 182px → `#stage`(残り) → `#side` 270px)。
+操作ヒントの `#hint` は左端から464px(270 + 182 + padding)の位置に固定表示します。
+
+| 列 | 幅 | 中身 | 描画 |
+| --- | --- | --- | --- |
+| `#left` 左パネル | 270px | 選択中の路線の駅リスト(経路順・↑↓・ドラッグ並べ替え) | `renderLeft()` |
+| `#quick` クイック操作パネル | 182px | **路線**(路線を追加・環状線トグル) / **ターミナル(乗り換え駅)**(トグルと属する路線チェック) / **その他の表示**(4トグル)。開閉なしの常設列 | `renderQuick()` |
+| `#stage` | 残り | SVG キャンバス | `renderCanvas()` |
+| `#side` 右パネル | 270px | 開閉できる6グループ(選択中 / 路線(レイヤー) / 選択中の路線 / 幹線道路 / 画像 / 路線図の設定) | `renderSide()` |
+
+> クイック操作パネルに置く4項目は**元来右パネルにあったもの**で、左へ移動しています(重複表示はしない)。
+
 ### CSS のグループ(src/ui/index.html 内 `<style>`)
 
 | 範囲 | 主なクラス | 内容 |
@@ -191,7 +203,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | 5.8 描画 | `tabs.js` / `ui-state.js`(`renderTools`・`renderAll`) / `canvas.js` / `side-panel.js` / `left-panel.js` |
 | 5.9 編集操作 | 本体は `core/operations.js`。`del` と道路描画は `ui-state.js`、追加系は `renderer.js`、`setHub` は `side-panel.js` |
 | 5.10 座標・ズーム | `snapPt` / `afterAdd` は `ui-state.js`、`pt` / `applyZoom` / `setZoom` は `canvas.js` |
-| 5.11 イベント | 全体(マウス・キー・ツールバー・ファイル)は `renderer.js`、`#side` / `#left` / `#tabs`・`#home` は各モジュール |
+| 5.11 イベント | 全体(マウス・キー・ツールバー・ファイル)は `renderer.js`、`#side` / `#quick` / `#left` / `#tabs`・`#home` は各モジュール |
 | 5.12 画像のインポートと書き出し | `renderer.js` |
 | 5.13 路線図タブの管理 | `tabs.js` |
 | 5.14 別ウィンドウとの同期 | `renderer.js` |
@@ -447,3 +459,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 6. **踏切は「区間+比率」で保持** — 駅を動かしても `keepCrossings()` で同じ場所に追随する。
 7. **容量上限** — 画像は縮小+WebP化して `localStorage` に載せる。失敗時は警告を出す。
 8. **接続線は常に1本** — 同じ2駅が複数のリストに載っていても `drawnConn` で重複を消す。
+9. **クイック操作パネルの操作は右パネルと同じハンドラ** — `side-panel.js` の `onPanel(type, fn)` が
+   `#side` と `#quick` の両方に `input` / `change` / `click` を登録する。ID・クラスは移動前と同一なので
+   分岐ロジックは共通のまま。ドラッグ(`.linklist`)と `.linksel` の `change` は `#side` のみに登録する。
+   描画は `renderSide()` の末尾で `renderQuick()` を呼ぶため、`renderSide()` を呼ぶ呼び出し側は変更不要。
