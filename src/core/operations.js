@@ -22,6 +22,12 @@ function snapCx(l, r, snap) {
 // ロック中・非表示の路線には編集できない
 const blockedReason = l => (l.lock ? 'locked' : l.hidden ? 'hidden' : null);
 
+// 削除の取り消しで戻すとき、「削除で代わりに作った」路線図がまだ手を入れられていないか
+const isEmptyMap = m => !!m && m.name === '路線図 1' && m.lines.length === 1 &&
+  !m.lines[0].stations.length && !m.lines[0].crossings.length &&
+  !m.roads.length && !m.stops.length && !m.hubs.length &&
+  !(m.boxes || []).length && !(m.images || []).length;
+
 // 履歴のスナップを状態へ適用する(読めないデータなら null を返す)
 function adopt(e) {
   if (!e) return null;
@@ -223,10 +229,21 @@ export function createCore() {
       pruneLinks(map);   // 路線ごと消した駅への接続を外す
       return deadId;
     },
-    // 路線図を削除(1つしか無ければ作り直す)
+    // 路線図を削除(1つしか無ければ代わりに作る。そのとき作られた路線図のIDを返す)
     deleteMap(id) {
       S.maps = S.maps.filter(x => x.id !== id);
-      if (!S.maps.length) S.maps.push(mkMap('路線図 1'));
+      if (!S.maps.length) { const m = mkMap('路線図 1'); S.maps.push(m); return m.id; }
+      return null;
+    },
+    // 削除の取り消し(U2)。削除で代わりに作った空の路線図(dropId)がまだ何も入っていなければ
+    // 一緒に外して、取り消す前の状態へ戻す。成功したら true。
+    restoreMap(map, index, dropId) {
+      if (!map || S.maps.some(x => x.id === map.id)) return false;
+      const spare = S.maps.length === 1 && S.maps[0].id === dropId && isEmptyMap(S.maps[0]);
+      if (spare) S.maps = [];
+      const at = clamp(index == null ? S.maps.length : index, 0, S.maps.length);
+      S.maps.splice(at, 0, map);
+      return true;
     },
 
     /* ---------- 並べ替え・所属・表示 ---------- */

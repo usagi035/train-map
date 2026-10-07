@@ -32,10 +32,18 @@ test('S6-2 JSON は readAsText の前に、画像はデコードの前に必ず�
   before('f.size > LIMITS.jsonFileBytes', 'r.readAsText(f)', 'JSONのサイズ検査');
   before('file.size > LIMITS.imageFileBytes', 'rd.readAsDataURL(file)', '画像のサイズ検査');
   before('nw * nh > LIMITS.imagePixels', "c.getContext('2d').drawImage", '画素数の検査');
-  // 検査をすっとばして read へ進む経路が無いこと(return で抜ける)
-  assert.match(rsrc, /if \(f\.size > LIMITS\.jsonFileBytes\) \{[^}]*e\.target\.value = ''; return;/s);
-  assert.match(rsrc, /if \(file\.size > LIMITS\.imageFileBytes\) \{[^}]*return;/s);
-  assert.match(rsrc, /if \(nw \* nh > LIMITS\.imagePixels\) \{[^}]*return;/s);
+  // 検査をすっとばして read/draw へ進む経路が無いこと(その検査の直後で return している)。
+  // 案内(トースト)が入ったので、`}` で切れない書き方にしておく。
+  const returnsBefore = (head, later) => {
+    const i = rsrc.indexOf(head);
+    assert.ok(i >= 0, `${head} が無い`);
+    const r = rsrc.indexOf('return;', i), l = rsrc.indexOf(later, i);
+    assert.ok(r > i, `${head} の直後に return が無い`);
+    assert.ok(l > r, `「${later}」が ${head} の return より先にある(検査をすっとばせる)`);
+  };
+  returnsBefore('if (f.size > LIMITS.jsonFileBytes) {', 'r.readAsText(f)');
+  returnsBefore('if (file.size > LIMITS.imageFileBytes) {', 'rd.readAsDataURL(file)');
+  returnsBefore('if (nw * nh > LIMITS.imagePixels) {', "c.getContext('2d').drawImage");
 });
 
 test('S6-3 画像は型の許可リストで確かめる(SVG は取り込めない)', () => {

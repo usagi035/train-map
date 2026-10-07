@@ -414,7 +414,7 @@ onPanel('click', e => {
     if (deadId) ui.line = m.lines[0].id;
     ui.sel = null; save(); renderAll();
   } else if (id === 'dmap') {
-    if (!confirm('「' + m.name + '」を削除しますか?')) return;
+    // 削除はそのまま実行し、後から「取り消し」で戻せる(confirm は使わない = U2)
     deleteMap(m.id);
   }
 });

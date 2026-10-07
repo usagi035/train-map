@@ -5,6 +5,7 @@
 import { S } from '../core/model.js';
 import { core, ui, esc, idf, curMap, viewNow, save, renderAll } from './ui-state.js';
 import { KEYS } from './storage.js';
+import { toast } from './toast.js';
 
 export function renderTabs() {
   document.getElementById('tabs').innerHTML =
@@ -37,14 +38,33 @@ function closeTab(id) {
   core.syncView(viewNow()); persistOpen(); renderAll();
 }
 function newMap() { const m = core.addMap('路線図 ' + (S.maps.length + 1)); save(); openMap(m.id); }
+// U2: 削除は取り消せる。消した直後に「取り消し」を押せるよう、メモリにだけ1件覚えておく
+let trashed = null;   // { map, index, dropId, wasOpen }
+
 export function deleteMap(id) {
-  core.deleteMap(id);
+  const gone = S.maps.find(x => x.id === id);
+  trashed = gone ? { map: JSON.parse(JSON.stringify(gone)), index: S.maps.indexOf(gone),
+                     dropId: null, wasOpen: ui.open.includes(id) } : null;
+  const dropId = core.deleteMap(id);   // 最後の1つを消したときは代わりに作られた路線図のID
+  if (trashed) trashed.dropId = dropId;
   save();                       // 表示を切り替える前に履歴へ(削除前の路線図に戻せるように)
   ui.open = ui.open.filter(x => x !== id);
   if (ui.map === id) {
     if (ui.open.length) { ui.map = ui.open[0]; ui.line = curMap().lines[0].id; ui.sel = null; } else ui.home = true;
   }
   core.syncView(viewNow()); persistOpen(); renderAll();
+  if (gone) toast('「' + gone.name + '」を削除しました', {
+    key: 'delmap', ms: 8000,      // 取り消しは少し長めに押せるように
+    actions: [{ label: '取り消し', onClick: restoreDeleted }],
+  });
+}
+// 削除を取り消す(8秒以内なら押せる)。取り消したら消す場所を1件だけ保持する
+function restoreDeleted() {
+  if (!trashed) return;
+  const t = trashed; trashed = null;
+  if (!core.restoreMap(t.map, t.index, t.dropId)) return;
+  save();
+  if (t.wasOpen) openMap(t.map.id); else { persistOpen(); renderAll(); }
 }
 // Alt+W から呼ばれる。true=路線図を閉じた(タブは閉じない) / false=開いている路線図がないのでウィンドウを閉じてよい
 window.__closeTab = () => {
@@ -63,6 +83,7 @@ document.getElementById('home').addEventListener('click', e => {
   if (o) openMap(o.dataset.open);
   else if (d) {
     const m = S.maps.find(x => x.id === d.dataset.del);
-    if (m && confirm('「' + m.name + '」を削除しますか?')) deleteMap(m.id);
+    // 削除はそのまま実行し、後から「取り消し」で戻せる(U2)
+    if (m) deleteMap(m.id);
   } else if (e.target.id === 'hnew') newMap();
 });

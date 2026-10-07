@@ -7,6 +7,7 @@ import { dist, segPt } from '../core/geometry.js';
 import { createCore } from '../core/operations.js';
 import { KEYS, migrateLegacyKeys } from './storage.js';
 import { setBanner, clearBanner } from './banner.js';
+import { toast } from './toast.js';
 
 // 状態の読み書き・編集操作はすべて core 経由(画面が直接書き換えない。指示書 §6/§7)
 export const core = createCore();
@@ -173,11 +174,23 @@ export function selVisible(sel) {
   if (sel.t === 'img') return showEl(m, 'img');
   return true;
 }
-// 非表示・ロック中の路線には駅や踏切を追加できない(理由を出して戻す)
+// 非表示・ロック中の路線には駅や踏切を追加できない(理由を出す。直せるならその場で直す)
 export function lineEditBlocked() {
   const l = curLine();
-  if (l.lock) { alert('「' + l.name + '」はロック中です。\n右パネルの 🔒 を解除すると編集できます。'); return true; }
-  if (l.hidden) { alert('「' + l.name + '」は非表示です。\n右パネルの 👁 で表示に戻すと追加できます。'); return true; }
+  if (l.lock) {
+    toast('「' + l.name + '」はロック中です。解除すると編集できます。', {
+      key: 'line-blocked',
+      actions: [{ label: 'ロックを解除', onClick: () => { core.update(l, { lock: false }); save(); renderAll(); } }],
+    });
+    return true;
+  }
+  if (l.hidden) {
+    toast('「' + l.name + '」は非表示です。表示に戻すと追加できます。', {
+      key: 'line-blocked',
+      actions: [{ label: '表示に戻す', onClick: () => { core.update(l, { hidden: false }); save(); renderAll(); } }],
+    });
+    return true;
+  }
   return false;
 }
 // 矩形に重なる要素を集める(駅・乗り換え駅・バス停・踏切・ラベル枠・幹線道路)

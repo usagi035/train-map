@@ -63,6 +63,7 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
 | `src/renderer/ui-state.js` | 画面側の共通状態・共通操作(`ui` / `save` / `renderAll` / □選択 / レイヤー判定 / 道路描画 / 削除)。**他の画面モジュールはここからのみ import する** |
 | `src/renderer/storage.js` | localStorage のキー一覧(`NS` / `KEYS`)と旧キーからの移行 `migrateLegacyKeys()`(§2、S3) |
 | `src/renderer/banner.js` | 非ブロッキングの案内バナー(`setBanner` / `clearBanner` / `hasBanner`)。S4=タブ間競合、S5=自動保存失敗で使う |
+| `src/renderer/toast.js` | 一時的な知らせ(`toast(text, { ms = 5000, actions, key, cls })` / `dismiss` / `dismissToast` / `toastCount` / `hasToast`)。`role="status"` `aria-live="polite"`、既定5秒で自動消滅、対応ボタンは任意、`key` を付けると同じ知らせは1枚。**U2: `alert()` / `confirm()` の代わり**(ロック解除・削除の取り消し8秒・取り込み結果と失敗理由・画像の失敗)。右上の1枚(`#toasts`) |
 | `src/renderer/canvas.js` | SVG の描画(`renderCanvas`)とズーム・スクロール(`pt` / `applyZoom` / `setZoom` / `centerStation`) |
 | `src/renderer/side-panel.js` | 右パネルの描画(`renderSide` / `sec`)と、左のクイック操作パネル(`renderQuick`)。イベントは `#side` と `#quick` の両方へ登録 |
 | `src/renderer/left-panel.js` | 左パネルの描画(`renderLeft` / `stationGlyph`)と駅の並べ替え |

@@ -149,6 +149,17 @@
                    background:#fff; color:var(--ink); border-radius:5px; cursor:pointer; }
   .banner button:hover { background:#e9f2ee; }
   .banner.warn { background:#8a2b1c; }
+  /* 一時的な知らせ(src/renderer/toast.js)。U2: alert()/confirm() の代わりに、
+     画面を止めず一定時間で自動的に消える。右上に重ね、案内バナー(中央上)とずらす */
+  #toasts { position:fixed; top:8px; right:8px; z-index:95; display:flex; flex-direction:column;
+            gap:8px; align-items:flex-end; max-width:calc(100vw - 16px); pointer-events:none; }
+  .toast { pointer-events:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+           background:var(--ink); color:#fff; padding:9px 13px; border-radius:8px;
+           font-size:12.5px; line-height:1.5; box-shadow:0 6px 18px rgba(0,0,0,.28); }
+  .toast .ttext { flex:1 1 auto; }
+  .toast button { font:inherit; font-size:12.5px; font-weight:700; padding:4px 11px; border:1px solid #fff;
+                  background:transparent; color:#fff; border-radius:999px; cursor:pointer; }
+  .toast button:hover { background:rgba(255,255,255,.18); }
 </style>
 </head>
 <body>

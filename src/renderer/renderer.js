@@ -17,6 +17,7 @@ import { renderLeft } from './left-panel.js';
 import { renderTabs, renderHome, persistOpen } from './tabs.js';
 import { KEYS } from './storage.js';
 import { setBanner, clearBanner, hasBanner } from './banner.js';
+import { toast } from './toast.js';
 
 // 履歴のスナップを画面へ適用する(表示中の路線図・路線を、そのときのものへ合わせ直す)
 function applySnap(e) {
@@ -80,10 +81,13 @@ function addBusStop(p, kind) {
 function addCrossing(p) {
   const res = core.addCrossing({ map: curMap(), p, snap: snapOn() });
   if (res.error === 'none') return;
-  if (res.error) {   // ロック中・非表示の路線には追加できない
-    const l = res.line;
-    alert('「' + l.name + '」は' + (res.error === 'locked' ? 'ロック中' : '非表示') + 'です。\n右パネルの ' +
-          (res.error === 'locked' ? '🔒 を解除' : '👁 で表示に戻す') + 'してから追加してください。');
+  if (res.error) {   // ロック中・非表示の路線には追加できない(その場で直せるようにボタンも添える)
+    const l = res.line, locked = res.error === 'locked';
+    toast('「' + l.name + '」は' + (locked ? 'ロック中' : '非表示') + 'です。追加できません。', {
+      key: 'line-blocked',
+      actions: [{ label: locked ? 'ロックを解除' : '表示に戻す',
+                  onClick: () => { core.update(l, locked ? { lock: false } : { hidden: false }); save(); renderAll(); } }],
+    });
     return;
   }
   ui.line = res.line.id; ui.sel = { t: 'cx', id: res.crossing.id };
@@ -450,19 +454,30 @@ document.getElementById('file').addEventListener('change', e => {
   const f = e.target.files[0]; if (!f) return;
   // 読む前に大きさを断つ(大きいJSONでフリーズさせない。S6)
   if (f.size > LIMITS.jsonFileBytes) {
-    alert('JSONファイルが大きすぎます(上限10MB)。このアプリで書き出したJSONを選んでください。');
+    toast('JSONファイルが大きすぎます(上限10MB)。このアプリで書き出したJSONを選んでください。', { key: 'import' });
     e.target.value = ''; return;
   }
   const r = new FileReader();
+  r.onerror = () => toast('ファイルを読み込めませんでした。', { key: 'import' });
   r.onload = () => {
+    let d = null;
+    // どこで失敗したかを分けて出す(「読み込めませんでした」だけでは直しようが無い)
+    try { d = JSON.parse(r.result); }
+    catch (err) { toast('このファイルはJSONではありません。書き出したJSONファイルを選んでください。', { key: 'import' }); return; }
     try {
-      const d = JSON.parse(r.result);
-      const warns = core.importDocument(d);   // 形式が違うデータは例外を投げる(下でまとめて案内する)
-      if (warns && warns.length) console.warn('読み込んだデータで直した項目:', warns);
+      const warns = core.importDocument(d);   // 使いものにならない文書だけ例外を投げる
       replaceUi({ map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: ui.zoom, drawing: null }); persistOpen();
       dropRemote();   // 文書を入れ替えたので、いま出ている「別タブの変更」は無効(S4)
       save(); renderAll();
-    } catch (err) { alert('読み込めませんでした。書き出したJSONファイルを選んでください。'); }
+      toast((warns && warns.length) ? '取り込みました。' + warns.length + '件の項目を補正しました。' : '取り込みました。',
+        { key: 'import' });
+      if (warns && warns.length) console.warn('読み込んだデータで直した項目:', warns);
+    } catch (err) {
+      toast((err && err.message === 'invalid document')
+        ? 'このファイルは路線図のデータではありません。書き出したJSONファイルを選んでください。'
+        : '取り込めませんでした(' + (err && err.message ? err.message : '理由不明') + ')。',
+        { key: 'import' });
+    }
   };
   r.readAsText(f); e.target.value = '';
 });
@@ -470,7 +485,7 @@ document.getElementById('file').addEventListener('change', e => {
 /* ---------- 画像のインポート ---------- */
 // 保存領域の上限に近づいたら注意(画像を取り込むと超えやすい)
 function checkQuota() {
-  if (core.snapshot().length > 4500000) alert('画像の取り込みで保存領域の上限に近づいています。\n保存に失敗する場合は、画像を小さくするか削除してください。');
+  if (core.snapshot().length > 4500000) toast('画像の取り込みで保存領域の上限に近づいています。保存に失敗する場合は、画像を小さくするか削除してください。', { key: 'quota', ms: 7000 });
 }
 // 画像ファイルを読み込んでキャンバスに配置。大きい画像は縮小してdata URLに畳む(localStorage対策)
 // `accept="image/*"` は見た目で何も強制しないので、型・大きさ・解像度はすべてここで確かめる(S6)。
@@ -480,26 +495,26 @@ const IMG_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/
 function importImageFile(file, replaceId) {
   if (!file) return;
   if (!file.type || IMG_TYPES.indexOf(file.type) < 0) {
-    alert(file.type === 'image/svg+xml'
+    toast(file.type === 'image/svg+xml'
       ? 'SVG画像は取り込めません。PNG・JPG・GIF・WebPのいずれかに変換してから読み込んでください。'
-      : '画像ファイル(PNG・JPG・GIF・WebP)を選んでください。');
+      : '画像ファイル(PNG・JPG・GIF・WebP)を選んでください。', { key: 'img' });
     return;
   }
   if (file.size > LIMITS.imageFileBytes) {
-    alert('画像ファイルが大きすぎます(上限15MB)。小さくしてから読み込んでください。');
+    toast('画像ファイルが大きすぎます(上限15MB)。小さくしてから読み込んでください。', { key: 'img' });
     return;
   }
   const rd = new FileReader();
-  rd.onerror = () => alert('画像を読み込めませんでした。');
+  rd.onerror = () => toast('画像ファイルを読み込めませんでした。', { key: 'img' });
   rd.onload = () => {
     const im = new Image();
-    im.onerror = () => alert('画像を読み込めませんでした。');
+    im.onerror = () => toast('画像として読めませんでした。ファイルが壊れていないか確認してください。', { key: 'img' });
     im.onload = () => {
       const m = curMap(), MAX = 1600;
       const nw = im.naturalWidth || 100, nh = im.naturalHeight || 100;
       // 解像度の上限は canvas に描く前(= メモリを食う処理の前)に確かめる(S6)
       if (nw * nh > LIMITS.imagePixels) {
-        alert('画像の解像度が高すぎます(上限5000万画素)。小さくしてから読み込んでください。');
+        toast('画像の解像度が高すぎます(上限5000万画素)。小さくしてから読み込んでください。', { key: 'img' });
         return;
       }
       let src = rd.result;
@@ -561,7 +576,7 @@ function exportImage() {
       URL.revokeObjectURL(a.href);
     }, 'image/png');
   };
-  img.onerror = () => alert('画像の書き出しに失敗しました。');
+  img.onerror = () => toast('画像の書き出しに失敗しました。別の画像で試してください。', { key: 'expimg' });
   img.src = 'data:image/svg+xml;base64,' + svg64;
 }
 
