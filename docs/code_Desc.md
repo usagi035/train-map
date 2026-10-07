@@ -376,13 +376,14 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | 箇所 | 動作 |
 | --- | --- |
 | `stage wheel` | **Ctrl+マウスホイールでズーム**(カーソル位置を基準) |
-| `stage mousedown` + `window mousemove/mouseup` | **中ボタン or Space+ドラッグでパン** |
-| **`cv mousedown`** | ツールごとの分岐: `station`(既存駅をクリックしたら追加せず選択+selectへ切替 / 空白へ追加)・`hub`・`crossing`・`busstop`・`terminal`・`road`(頂点追加)・`box`(ドラッグで四角)。select モードは要素ごとに `ui.sel` と `drag` を設定(駅/駅名/バス停/バス停名/道路/頂点/ラベル枠/画像/リサイズ■/踏切)。**空白か線のドラッグは □矩形選択開始**。`hitLocked` なら何もしない |
-| `window mousemove`(band/drag) | □選択の追従、または各要素のドラッグ移動(スナップ・`ensureRoom`・クランプ・**ハブ駅は全路線の同じ駅を同時に動かす**)。最後に `renderCanvas()+renderSide()` |
-| `window mouseup` | □確定 → `finishBand()` / ドラッグ終了 → `save()` |
+| `stage pointerdown` + `window pointermove/pointerup` | **中ボタン or Space+ドラッグでパン**(`setPointerCapture`) |
+| **`cv pointerdown`** | ツールごとの分岐: `station`(既存駅をクリックしたら追加せず選択+selectへ切替 / 空白へ追加)・`hub`・`crossing`・`busstop`・`terminal`・`road`(頂点追加)・`box`(ドラッグで四角)。select モードは要素ごとに `ui.sel` と `drag` を設定(駅/駅名/バス停/バス停名/道路/頂点/ラベル枠/画像/リサイズ■/踏切)。**空白か線のドラッグは □矩形選択開始**。`hitLocked` なら何もしない。**追加する系は `actAt()` 経由**: マウスは即時、タッチ/ペンは「動かずに離した(タップ)」に実行し、2本目が来たら取り消す(U1) |
+| `window pointermove`(band/drag) | □選択の追従、または各要素のドラッグ移動(スナップ・`ensureRoom`・クランプ・**ハブ駅は全路線の同じ駅を同時に動かす**)。最後に `renderCanvas()+renderSide()`。`pointers` 2本以上なら `movePinch()` へ |
+| `window pointerup` / `pointercancel` | タップ確定(`pendingAct` 実行 + ダブルタップで道路確定)/ □確定 → `finishBand()` / ドラッグ終了 → `save()` |
+| `beginPinch()` / `movePinch()` | **2本指 = 開いた距離でズーム(既存 `setZoom`)・中点の移動でパン(scrollLeft/Top)**。2本目が来たら進行中のドラッグは `save()` して止める(U1) |
 | `finishBand()` | 動かさなかったクリックなら路線選択のみ。動かしていれば `pickInBox` で複数選択(`ui.bulk` に設定) |
-| `window mousemove`(drawing) | 道路描画中の予告線(`hover`) |
-| `cv dblclick` | 道路のダブルクリックで確定 |
+| `window pointermove`(drawing) | 道路描画中の予告線(`hover`)。タッチ(`pointerType==='touch'`)は除外 |
+| `cv dblclick` | 道路のダブルクリックで確定(タッチは**ダブルタップ** = 320ms以内の連続タップ) |
 | `window keydown` | **Alt+W**=タブ閉じる(`e.code === 'KeyW'`。Ctrl+W/Cmd+W はブラウザが先に掴むため) / **Ctrl+Z・Ctrl+Y(Ctrl+Shift+Z)**=undo/redo(テキスト欄中は除く) / **Delete・Backspace**=削除 / **Enter**=道路確定 / **Esc**=道路中止→□解除→selectに戻る / **Space**=押下中はパンモード |
 | `window keyup` | Space 解除 |
 

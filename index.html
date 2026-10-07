@@ -39,7 +39,7 @@
   button:focus-visible, input:focus-visible { outline:2px solid var(--signal); outline-offset:1px; }
   main { flex:1; display:flex; min-height:0; }
   #stage { flex:1; overflow:auto; background:var(--paper); }
-  #cv { display:block; user-select:none; }
+  #cv { display:block; user-select:none; touch-action:none; }   /* タッチ操作は自前で処理する(ズーム/パン = U1) */
   aside { width:270px; border-left:1px solid var(--rule); background:#fff; padding:12px; overflow:auto; }
   /* 左サイドバー(統合): 上=選択中の路線の駅リスト(ここだけがスクロール) / 下=クイック操作(高さ固定)。
      幅は #splleft をドラッグで変えられる(--lw に保存) */

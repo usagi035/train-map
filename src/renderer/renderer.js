@@ -103,25 +103,74 @@ let band = null;   // 空白のドラッグで引く□(矩形選択)
 let spaceDown = false, pan = null;   // Space+ドラッグ / 中ボタンで画面をスクロール
 setBandSource(() => band);   // 描画へは画面が持つ□の状態を渡す
 
-// 画面のパン(Space+ドラッグ または 中ボタンドラッグ)
-stage.addEventListener('mousedown', e => {
+// 画面のパン(Space+ドラッグ または 中ボタンドラッグ。2本指のパンは下の movePinch() 側)
+stage.addEventListener('pointerdown', e => {
   if (e.button === 1 || (e.button === 0 && spaceDown)) {
     e.preventDefault();
+    try { stage.setPointerCapture(e.pointerId); } catch (err) {}   // ドラッグ中は指(カーソル)を受け取り続ける
     pan = { x: e.clientX, y: e.clientY, sl: stage.scrollLeft, st: stage.scrollTop };
     stage.style.cursor = 'grabbing';
   }
 });
-window.addEventListener('mousemove', e => {
+window.addEventListener('pointermove', e => {
   if (!pan) return;
   stage.scrollLeft = pan.sl - (e.clientX - pan.x);
   stage.scrollTop = pan.st - (e.clientY - pan.y);
 });
-window.addEventListener('mouseup', () => {
+window.addEventListener('pointerup', () => {
   if (pan) { pan = null; stage.style.cursor = spaceDown ? 'grab' : ''; }
 });
 
-cv.addEventListener('mousedown', e => {
+/* ---------- ポインタ入力(マウス / タッチ / ペン)(U1) ----------
+   マウスは従来どおり「押した瞬間」に行動する。タッチ/ペンは、
+   ① 追加する行動(駅・乗り換え・踏切・バス停・終点・道路・ラベル枠)は
+      「動かずに離した(=タップ)」に実行 → 押した指のまま2本目が来たら取り消す
+      (ピンチの開始と誤爆しないため)。
+   ② 2本指 = 開いた距離でズーム、中点の移動でパン(Space+ドラッグと同じ scroll 操作)。
+   ③ 押した指は `setPointerCapture` で canvas が受け取り続ける(画面外へ出ても追える)。 */
+const pointers = new Map();   // pointerId → そのときのクライアント座標(マウスは対象外)
+let pinch = null;             // 2本指の基準(距離・中点・スクロール位置・開始時のズーム)
+let pendingAct = null;        // タッチで保留中の「追加する」行動
+let lastTapAt = 0;            // タッチのダブルタップ(道路の確定 = マウスのダブルクリック相当)
+
+// 追加する行動の置き場所。マウスは即、タッチ/ペンはタップ(離したとき)に実行する。
+function actAt(e, fn) {
+  if (e.pointerType === 'mouse') { fn(); return; }
+  pendingAct = { fn, x: e.clientX, y: e.clientY, moved: false, at: Date.now() };
+}
+// 2本目が来たら、進行中の操作を確定して止めてからズーム/パンへ移る
+function beginPinch() {
+  if (band) finishBand();
+  if (drag) { drag = null; save(); }
+  pendingAct = null;
+  const [a, b] = [...pointers.values()];
+  pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2,
+            sl: stage.scrollLeft, st: stage.scrollTop, z0: ui.zoom };
+}
+function movePinch() {
+  if (!pinch) return;
+  const [a, b] = [...pointers.values()];
+  if (!a || !b) return;
+  // 中点が動いた分だけパン(Space+ドラッグと同じ)
+  stage.scrollLeft = pinch.sl - ((a.x + b.x) / 2 - pinch.cx);
+  stage.scrollTop = pinch.st - ((a.y + b.y) / 2 - pinch.cy);
+  // 開いた距離の比だけズーム(既存の setZoom を使う = マウスのズームと同じ挙動)
+  const d = Math.hypot(a.x - b.x, a.y - b.y);
+  if (pinch.d > 8 && d > 8) {
+    const r = stage.getBoundingClientRect();
+    setZoom(pinch.z0 * (d / pinch.d), (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+  }
+}
+
+cv.addEventListener('pointerdown', e => {
   if (e.button !== 0 || spaceDown) return;   // 中ボタン / Space押下中はパン処理へ
+  // 押した指(マウス)を受け取り続ける。指がキャンバスの外へ出ても移動・離しを追える
+  try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+  if (e.pointerType !== 'mouse') {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) { beginPinch(); return; }   // 2本目 → いまの操作を止めてズーム/パンへ
+    if (pointers.size > 2) return;                      // 3本目以降は無視
+  }
   const el = e.target.closest('[data-t]'), p = pt(e), m = curMap();
   clearBulk();   // クリックされた時点で矩形選択のまとまりは解除(下で□選択を始める場合はまた設定される)
   // ロック中の路線の駅・踏切は、どのツールでも選択・操作しない(誤操作防止)
@@ -141,17 +190,21 @@ cv.addEventListener('mousedown', e => {
       renderAll();
       return;
     }
-    return addStation(p);
+    actAt(e, () => addStation(p));
+    return;
   }
-  if (ui.tool === 'hub') return addHubStation(p);
-  if (ui.tool === 'crossing') return addCrossing(p);
-  if (ui.tool === 'busstop') return addBusStop(p, 'stop');
-  if (ui.tool === 'terminal') return addBusStop(p, 'terminal');
-  if (ui.tool === 'road') { if (!ui.drawing) ui.drawing = { pts: [], hover: null }; addRoadPoint(p); return; }
+  if (ui.tool === 'hub') { actAt(e, () => addHubStation(p)); return; }
+  if (ui.tool === 'crossing') { actAt(e, () => addCrossing(p)); return; }
+  if (ui.tool === 'busstop') { actAt(e, () => addBusStop(p, 'stop')); return; }
+  if (ui.tool === 'terminal') { actAt(e, () => addBusStop(p, 'terminal')); return; }
+  if (ui.tool === 'road') { actAt(e, () => { if (!ui.drawing) ui.drawing = { pts: [], hover: null }; addRoadPoint(p); }); return; }
   if (ui.tool === 'box') {
-    const b = core.addBox(m, snapPt(p));   // 既定サイズのラベル枠を追加
-    ui.sel = { t: 'bx', id: b.id }; drag = { t: 'bxnew', id: b.id, a: { x: b.x, y: b.y }, p0: p };
-    renderAll(); return;
+    actAt(e, () => {
+      const b = core.addBox(m, snapPt(p));   // 既定サイズのラベル枠を追加
+      ui.sel = { t: 'bx', id: b.id }; drag = { t: 'bxnew', id: b.id, a: { x: b.x, y: b.y }, p0: p };
+      renderAll();
+    });
+    return;
   }
   // 選択モードで空白(または線)をドラッグ → □で複数選択
   if (ui.tool === 'select' && (!el || el.dataset.t === 'line')) {
@@ -209,7 +262,11 @@ cv.addEventListener('mousedown', e => {
   else ui.sel = null;
   renderAll();
 });
-window.addEventListener('mousemove', e => {
+window.addEventListener('pointermove', e => {
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size >= 2) { movePinch(); return; }   // 2本指 = パン + ズーム
+  // タップにしていた指が動いたら「追加」は実行しない(誤爆防止)
+  if (pendingAct && Math.hypot(e.clientX - pendingAct.x, e.clientY - pendingAct.y) > 8) pendingAct.moved = true;
   if (band) {   // □(矩形選択)を引いている間
     band.b = pt(e);
     if (!band.moved && Math.hypot(band.b.x - band.a.x, band.b.y - band.a.y) > 3) band.moved = true;
@@ -292,14 +349,31 @@ function finishBand() {
   else clearBulk();
   renderAll();
 }
-window.addEventListener('mouseup', () => {
+// 指を離した(タップの確定) / ブラウザが操作を取り消した(pointercancel)
+function endPointer(e, runTap) {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;   // 2本いなくなったらズーム/パン終了
+  if (runTap) {
+    const a = pendingAct; pendingAct = null;
+    if (a && !a.moved && Date.now() - a.at < 800) {   // 動いていない指 = タップ
+      a.fn();
+      // タッチのダブルタップ = マウスのダブルクリック相当(幹線道路の確定)
+      if (ui.drawing && Date.now() - lastTapAt < 320) finishRoad();
+      lastTapAt = Date.now();
+    }
+  } else {
+    pendingAct = null;
+  }
   if (band) { finishBand(); return; }
   if (!drag) return;
   const was = drag; drag = null; save();
   if (was.t === 'bxnew') { afterAdd(); renderAll(); }
-});
-// 幹線道路ツール: マウス位置への予告線
-window.addEventListener('mousemove', e => {
+}
+window.addEventListener('pointerup', e => endPointer(e, true));
+window.addEventListener('pointercancel', e => endPointer(e, false));
+// 幹線道路ツール: マウス位置への予告線(タッチにホバーは無い)
+window.addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch') return;
   if (!ui.drawing || drag) return;
   ui.drawing.hover = snapPt(pt(e));
   renderCanvas();

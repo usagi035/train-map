@@ -31,7 +31,8 @@ export function renderCanvas() {
     h += `<g data-t="img" data-id="${idf(im.id)}"${pe}>` +
          `<image href="${esc(im.src)}" x="${X}" y="${Y}" width="${W}" height="${H}" opacity="${OP}" preserveAspectRatio="none"/>` +
          (sel ? `<rect x="${X - 3}" y="${Y - 3}" width="${W + 6}" height="${H + 6}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` +
-                `<rect data-t="imgr" data-id="${idf(im.id)}" x="${X + W - 6}" y="${Y + H - 6}" width="12" height="12" fill="${fg}" style="cursor:nwse-resize"/>` : '') + '</g>';
+                `<rect data-t="imgr" data-id="${idf(im.id)}" x="${X + W - 6}" y="${Y + H - 6}" width="12" height="12" fill="${fg}" style="cursor:nwse-resize"/>` +
+                `<rect data-t="imgr" data-id="${idf(im.id)}" x="${X + W - 22}" y="${Y + H - 22}" width="44" height="44" fill="transparent" pointer-events="all" style="cursor:nwse-resize"/>` : '') + '</g>';
   });
   drawImages('back');   // 背面は道路・ラベル枠・線路より下に敷く
   (m.boxes || []).forEach(b => {
@@ -41,7 +42,7 @@ export function renderCanvas() {
     const fs = Math.max(8, Math.min(14, H - 8, (W - 8) / Math.max(1, n)));
     h += `<g data-t="bx" data-id="${idf(b.id)}"><rect x="${X}" y="${Y}" width="${W}" height="${H}" rx="3" fill="${col(b.fill)}" fill-opacity=".92" stroke="${fg}" stroke-opacity=".45" stroke-width="1.5"/>` +
          (b.text ? `<text x="${X + W / 2}" y="${Y + H / 2 + fs * 0.35}" text-anchor="middle" font-size="${fs}" font-weight="700" fill="${tc}">${esc(b.text)}</text>` : '') +
-         (sel ? `<rect x="${X - 3}" y="${Y - 3}" width="${W + 6}" height="${H + 6}" rx="4" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/><rect data-t="bxr" data-id="${idf(b.id)}" x="${X + W - 6}" y="${Y + H - 6}" width="12" height="12" fill="${fg}" style="cursor:nwse-resize"/>` : '') + '</g>';
+         (sel ? `<rect x="${X - 3}" y="${Y - 3}" width="${W + 6}" height="${H + 6}" rx="4" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/><rect data-t="bxr" data-id="${idf(b.id)}" x="${X + W - 6}" y="${Y + H - 6}" width="12" height="12" fill="${fg}" style="cursor:nwse-resize"/><rect data-t="bxr" data-id="${idf(b.id)}" x="${X + W - 22}" y="${Y + H - 22}" width="44" height="44" fill="transparent" pointer-events="all" style="cursor:nwse-resize"/>` : '') + '</g>';
   });
   // 0) 幹線道路(背景・独立要素)
   (m.roads || []).forEach(r => {

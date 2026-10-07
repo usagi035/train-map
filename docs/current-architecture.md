@@ -70,17 +70,21 @@ let ui = { map, line, sel, tool, open, home, zoom, drawing, bulk, bulkRect, bulk
 すべて「**イベントハンドラ or 編集関数が `S`/`ui` を直接 mutate → `save()` → `renderAll()`**」という同じ形。
 `core.dispatch` に相当する**共通の入口は存在しない**が、**共通の出口(`save()` / `renderAll()`)は存在する**。
 
-### 4.1 キャンバス(マウス/キーボード)
+### 4.1 キャンバス(マウス/タッチ/キーボード)
+
+※ 入力は U1 で**全て Pointer Events** に移行済み(`mousedown` 等は残っていない)。
+`cv pointerdown` = 押した瞬間、`window pointerup/pointercancel` = 離した瞬間、
+タッチの**追加する行動だけ**は `actAt()` で「タップ(離したとき)」へ送られる。
 
 | 操作 | 更新箇所 |
 |---|---|
-| 駅の追加 | `addStation()` L793 ← `cv mousedown`(tool=station)L990-1006 |
-| 乗り換え駅の追加 | `addHubStation()` L808 ← mousedown L1007 |
-| 踏切の追加 | `addCrossing()` L877 ← mousedown L1008 |
-| バス停 / バスターミナル追加 | `addBusStop()` L822 ← mousedown L1009-1010 |
-| ラベル枠の追加 | mousedown 内で直接 `m.boxes.push` L1012-1018 |
-| 幹線道路の追加 | `addRoadPoint()` L859 / `finishRoad()` L841 / `cancelRoad()` L858 ← mousedown L1011・`dblclick` L1178・`Enter` L1192 |
-| **要素の移動(ドラッグ)** | `window mousemove` L1075-1149 が**マウスごとに直接 mutate**(駅・駅名・バス停・バス停名・道路全体・頂点・ラベル枠・画像・踏切)。**確定は `mouseup` L1165-1170 の `save()` 1回** |
+| 駅の追加 | `addStation()` L793 ← `cv pointerdown`(tool=station)L990-1006(タッチはタップ時) |
+| 乗り換え駅の追加 | `addHubStation()` L808 ← pointerdown L1007 |
+| 踏切の追加 | `addCrossing()` L877 ← pointerdown L1008 |
+| バス停 / バスターミナル追加 | `addBusStop()` L822 ← pointerdown L1009-1010 |
+| ラベル枠の追加 | pointerdown 内で直接 `m.boxes.push` L1012-1018 |
+| 幹線道路の追加 | `addRoadPoint()` L859 / `finishRoad()` L841 / `cancelRoad()` L858 ← pointerdown L1011・`dblclick` L1178(タッチはダブルタップ)・`Enter` L1192 |
+| **要素の移動(ドラッグ)** | `window pointermove` L1075-1149 が**入力ごとに直接 mutate**(駅・駅名・バス停・バス停名・道路全体・頂点・ラベル枠・画像・踏切)。**確定は `pointerup` L1165-1170 の `save()` 1回** |
 | ラベル枠/画像のリサイズ | 同 L1138(`bxr`)・L1130(`imgr`)、新規枠のドラッグ L1139(`bxnew`) |
 | 画像の追加/差替え | `importImageFile()` L1253 |
 | 削除(1件/□で複数) | `delOne()` L891 / `del()` L915 ← `Delete`/`Backspace` L1191・ツールバー `#del` L1217・`#idel` L1529 |
@@ -112,7 +116,7 @@ let ui = { map, line, sel, tool, open, home, zoom, drawing, bulk, bulkRect, bulk
 | タブ開閉・路線図の新規/削除 | `openMap` L1328・`closeTab` L1333・`newMap` L1342・`deleteMap` L1343 |
 | 別ウィンドウからの取り込み | `storage` L1688(**`S` を丸ごと差し替え、履歴もリセット**) |
 
-**洗い出しの結果: 状態を変える箇所は上記の3グループ(キャンバス mousedown/mousemove・編集関数・パネルの input/change/click)に集約されている。** 全数を列挙可能であり、`dispatch` への付け替えは機械的に進められる。
+**洗い出しの結果: 状態を変える箇所は上記の3グループ(キャンバス pointerdown/pointermove・編集関数・パネルの input/change/click)に集約されている。** 全数を列挙可能であり、`dispatch` への付け替えは機械的に進められる。
 
 ## 5. ID の付け方
 
@@ -184,7 +188,7 @@ const uid = () => Math.random().toString(36).slice(2, 9);   // renderer.js L25
 | 1 | 3章 `src/core|file|ui|online|main` のモジュール構成(案) | **`src/` 無し。単一の `renderer.js`(1708行)**。ES modules でも無く `<script src>` | Phase 1 は分割ではなく**新規構成の作成**。モジュール化の方式の決定が必要(判断ポイント1) |
 | 2 | 4.3「既存ファイルに**連番の ID** が入っている場合」 | **既存は `Math.random()` の7文字**(`uid()`)。連番ではない | ID 改修の必要性が下がる。既存ファイルへの影響も小さい(判断ポイント2) |
 | 3 | 5章「形式のバージョン(例: `formatVersion`)を持たせる」 | バージョン**無し**。ただし **`migrate()` が既に存在**し旧形式を変換している | `formatVersion` の追加は任意。追加しても読み込みは互換可能 |
-| 4 | 4.1.3「Operation は確定した編集の単位。ドラッグは mouseup で1回」 | **既存も mouseup の `save()` 1回**(mousemove 中は履歴に積まない) | **仕様と一致**。Operation 化しやすい |
+| 4 | 4.1.3「Operation は確定した編集の単位。ドラッグは mouseup で1回」 | **既存も `pointerup` の `save()` 1回**(pointermove 中は履歴に積まない) | **仕様と一致**。Operation 化しやすい |
 | 5 | 10章「既存のテストの仕組みがあればそれに従う」 | **テストは一切無し** | `node:test` を新規導入(依存追加なしで可) |
 | 6 | 7章「メニューに共同編集を設け…」 | **アプリにメニューが無い**(`setMenuBarVisibility(false)`)。操作はツールバーと右パネルのみ | 「共同編集」の置き場が問題(判断ポイント4) |
 | 7 | 4.1.1「UI が状態を直接書き換えない」 | すべて直接書き換えている | Phase 2 で全ハンドラを `dispatch` 経由に付け替える必要あり |
