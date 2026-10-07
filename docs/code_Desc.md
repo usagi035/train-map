@@ -180,7 +180,7 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 | 接続リスト | `.linkgroup` / `.linklist` / `.badge` | 路線ごとの「接続する駅」 |
 | ヒント | `#hint` | 左下に固定(`left: calc(var(--lw) + 17px)` で左サイドバーの幅に追従) |
 
-CSP: `default-src 'self'`(script/style の inline と `data:` 画像のみ許可)。
+CSP: `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'`(指示書 S2)。**JavaScript は同一オリジンの外部ファイルのみ**(インライン `<script>`・インラインのイベントハンドラ・`javascript:` URL は拒否)。外部接続は全て止め、画像は同一オリジンか `data:` のみ。スタイルのインラインだけは表示上の都合で許可。
 
 ---
 

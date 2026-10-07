@@ -42,7 +42,7 @@ train/
 | preload | **preload ファイルは存在しない** |
 | IPC | **未使用**(`ipcMain` / `ipcRenderer` / `contextBridge` はどこにも無い) |
 | セキュリティ設定 | `contextIsolation: true` / `nodeIntegration: false`(`main.js` L8) |
-| CSP | `index.html` L5:`default-src 'self'`、script/style の inline と `data:` 画像のみ許可 |
+| CSP | `index.html` L5:`default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'` |
 | 複数ウィンドウ | Renderer が `window.open('index.html#<mapId>')` で開く。Main は `setWindowOpenHandler` でサイズだけ指定 |
 | 別ウィンドウ間の同期 | 同一 `localStorage` + `storage` イベント(`renderer.js` L1688) |
 | キーボード | Main の `before-input-event` が Ctrl+W を横取りし、Renderer の `window.__closeTab()` を呼ぶ(`main.js` L20-30) |

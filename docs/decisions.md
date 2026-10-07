@@ -23,7 +23,7 @@
 ## 1. モジュール化の方式 → **決定: ESM(`<script type="module">`)を採用**
 
 - **確認したこと**: Electron 33・`file://` 読み込みで、`<script type="module">` の静的 import と動的 `import()` の**両方が動作する**ことを検証した(検証用アプリで `ESM_STATIC_OK` / `ESM_DYNAMIC_OK` を確認)。
-- 現行の CSP(`default-src 'self'; script-src 'self' 'unsafe-inline'`)も同一オリジンのモジュールを許可する。
+- 現行の CSP(S2 以降は `default-src 'none'; script-src 'self'; …`)も同一オリジンのモジュールを許可する。
 - **選択肢**
   - (A) **ESM を使う** ← 採用。仕様3.2の「`ui` は `online` を `import()` で動的に読み込む」と整合。ファイル分割も自然にできる。
   - (B) グローバルスクリプトを複数分割(順序依存・名前空間オブジェクト) — 実装は簡単だが依存の向きを機械的に守れない。
@@ -253,7 +253,7 @@
 
 依頼: `IMPROVEMENTS.md`(指示書 S1/S1b)。「他人の JSON を開く」のがこのアプリの通常の利用手順で、
 公開サイト( GitHub Pages )では読み込んだ中身がそのまま `innerHTML` に流れ込むと保存型 XSS になる。
-CSP は `script-src 'unsafe-inline'` のためインラインイベントハンドラを止められなかった(S2 で併せて対応)。
+CSP は `script-src 'unsafe-inline'` のためインラインイベントハンドラを止められなかった(S2 で除去済み)。
 
 - **方針(指示書の硬性規則どおり)**: ①**白名单で新規オブジェクトを作る**(入力は一切書き換えない・スプレッドしない)、
   ②**直せるものは直して通す**(既存データの互換性を最優先。`invalid document` は地図が1件も無いときだけ)、
@@ -287,3 +287,35 @@ CSP は `script-src 'unsafe-inline'` のためインラインイベントハン�
   ルールは同じものとして扱い、作業ブランチは **`security/hardening`**(作成前に安全タグ `pre-hardening-2026-10` を push)。
   リポジトリの `docs/AI-rule.md`(重要な変更は `deb_*`)と指示書のブランチ命名は食い違うため、指示書の
   `security/hardening` を優先した。
+
+## 16. CSP から `script-src 'unsafe-inline'` を外す(`index.html`)→ 決定(2026-10-07 実装・検証済み)
+
+依頼: `IMPROVEMENTS.md`(指示書 S2)。S1/S1b は「不審な文字列をデータ側から弾く」防御であり、
+CSP がインライン実行を許している限り、入口が1つでも通ればコード実行まで到達しうる。
+`script-src 'unsafe-inline'` を外すことで、仮に属性へ `on*` が入っても発火しない最後の砦にする。
+
+- **採用した CSP(指示書の指定どおり)**:
+  `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'`
+  - `script-src 'self'` = 同一オリジンの外部ファイル(`<script type="module" src>`)のみ。
+    インライン `<script>`・インラインイベントハンドラ・`javascript:` URL をすべて拒否
+  - `default-src 'none'` = fetch / Worker / webfont / media を全て拒否(**このアプリは未使用**)。
+    保存は localStorage、書き出しは `blob:` の `<a download>` なので影響しない
+  - `img-src 'self' data:` = 画像は取り込みの data URL と同一オリジンのみ
+  - `style-src 'unsafe-inline'` は維持(インライン `<style>` と `style=""` 属性を多用しているため)。
+    **残っている緩和点として README の「現在の制限」に明記**
+  - `base-uri 'none'` / `form-action 'none'`(`<form>` は無い)
+- **掛け方**: `index.html` の `<meta http-equiv>`(GitHub Pages はヘッダを設定できないため)。
+  その代わり `frame-ancestors` / `report-uri` は使えない(README の現行制限に明記)。
+- **前提の確認**: `src/` での `fetch` / `XMLHttpRequest` / `Worker` / `createObjectURL` の利用は
+  `renderer.js` の書き出し2箇所のみ(`blob:` + `<a download>`)。インライン `<script>` は無く
+  (`index.html` のエントリは外部モジュール1本)、インラインの `on*=` 属性を生成している箇所も無い。
+
+- **検証(実ブラウザ http://localhost:8080/)**: 変更後にリロード → 通常運用のコンソールエラー0件・
+  警告0件・ダイアログ0件、描画(駅5・路線1・画像 data URL 1)は従来どおり。以下3つが**すべて拒否**され
+  それぞれ CSP違反としてコンソールに出ることを実測した。
+  1. `createElement('script').textContent = '…'` で挿入したインライン script → 実行されない
+  2. `setAttribute('onclick', '…')` したボタンをクリック → ハンドラが発火しない
+  3. `javascript:` URL をクリック → 実行されない
+  通常機能の回帰: ツール切替 / ズーム(125%→100%)/ レイヤー選択(色・太さの入力)/ 駅選択 /
+  書き出し(JSON・PNG = `blob:` ダウンロード)/ 路線図一覧の開閉、いずれも動作し違反は出ない。
+  自動テストは `test/csp.test.js`(meta が指す方針そのものと、インライン script が無いこと)。
