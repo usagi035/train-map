@@ -7,6 +7,8 @@ import { S, getSnapshot, replaceState, snapStr, newId, mkLine, mkMap, mkStation,
          OFF_LINK, COLORS, G, mw, mh, clamp } from './model.js';
 import { project, keepCrossings, segPt, segA, segB, dist } from './geometry.js';
 import { migrate } from './migration.js';
+import { sanitizeDocument } from './sanitize.js';
+import { SAMPLE_MAP } from './sample.js';
 import * as history from './history.js';
 
 // 踏切の位置をグリッド上の点に合わせる(snap=false のときは位置をそのまま使う)
@@ -20,6 +22,12 @@ function snapCx(l, r, snap) {
 }
 // ロック中・非表示の路線には編集できない
 const blockedReason = l => (l.lock ? 'locked' : l.hidden ? 'hidden' : null);
+
+// 削除の取り消しで戻すとき、「削除で代わりに作った」路線図がまだ手を入れられていないか
+const isEmptyMap = m => !!m && m.name === '路線図 1' && m.lines.length === 1 &&
+  !m.lines[0].stations.length && !m.lines[0].crossings.length &&
+  !m.roads.length && !m.stops.length && !m.hubs.length &&
+  !(m.boxes || []).length && !(m.images || []).length;
 
 // 履歴のスナップを状態へ適用する(読めないデータなら null を返す)
 function adopt(e) {
@@ -35,10 +43,13 @@ export function createCore() {
     snapshot: snapStr,
     replace: replaceState,
     // 保存済み / 読み込んだデータを取り込む(不正なら例外を投げる)
+    // 中身は必ずサニタイズを通す。見た目の変な値は既定へ直し、
+    // 使いものにならない文書だけ invalid document(画面側で案内する)。
+    // 返り値は警告(件数超過などで直した内容)の配列。
     importDocument(d) {
-      if (!d || !Array.isArray(d.maps) || !d.maps.length ||
-          !d.maps.every(m => m && Array.isArray(m.lines) && m.lines.length)) throw new Error('invalid document');
-      replaceState(migrate(d));
+      const { doc, warnings } = sanitizeDocument(d);
+      replaceState(migrate(doc));
+      return warnings;
     },
 
     /* ---------- 履歴(§5: push / undo / redo / canUndo / canRedo) ---------- */
@@ -166,6 +177,34 @@ export function createCore() {
     },
     // 路線図を追加
     addMap(name) { const m = mkMap(name); S.maps.push(m); return m; },
+    // 路線図の複製(U5: 一覧の「複製」)。中身はまるごとコピーし、ID と名前だけ作る。
+    // 要素の ID は路線図ごとに閉じている(探す関数は必ずその地図を見る)ので、そのままでよい
+    duplicateMap(id) {
+      const i = S.maps.findIndex(m => m.id === id);
+      if (i < 0) return null;
+      const copy = JSON.parse(JSON.stringify(S.maps[i]));
+      copy.id = newId();
+      copy.name = (copy.name || '路線図') + ' のコピー';
+      S.maps.splice(i + 1, 0, copy);
+      return copy;
+    },
+    // 路線図の名前を変える(U5)。空の名前は受け付けない(= 変わらない)
+    renameMap(id, name) {
+      const m = S.maps.find(x => x.id === id);
+      if (!m || !name) return null;
+      m.name = name;
+      return m;
+    },
+    // 空の路線図に同梱のサンプルを入れる(U5: 初回の案内から)。
+    // 路線図の ID はそのままにして中身だけ差し替える(開いているタブと対応がずれないため)
+    loadSample(mapId) {
+      const i = S.maps.findIndex(m => m.id === mapId);
+      if (i < 0) return null;
+      const m = JSON.parse(JSON.stringify(SAMPLE_MAP));
+      m.id = mapId;
+      S.maps[i] = m;
+      return m;
+    },
 
     /* ---------- 削除 ---------- */
     // 1つの要素を削除(□で選んだ複数の削除でも使う)。削除できたら true
@@ -219,10 +258,21 @@ export function createCore() {
       pruneLinks(map);   // 路線ごと消した駅への接続を外す
       return deadId;
     },
-    // 路線図を削除(1つしか無ければ作り直す)
+    // 路線図を削除(1つしか無ければ代わりに作る。そのとき作られた路線図のIDを返す)
     deleteMap(id) {
       S.maps = S.maps.filter(x => x.id !== id);
-      if (!S.maps.length) S.maps.push(mkMap('路線図 1'));
+      if (!S.maps.length) { const m = mkMap('路線図 1'); S.maps.push(m); return m.id; }
+      return null;
+    },
+    // 削除の取り消し(U2)。削除で代わりに作った空の路線図(dropId)がまだ何も入っていなければ
+    // 一緒に外して、取り消す前の状態へ戻す。成功したら true。
+    restoreMap(map, index, dropId) {
+      if (!map || S.maps.some(x => x.id === map.id)) return false;
+      const spare = S.maps.length === 1 && S.maps[0].id === dropId && isEmptyMap(S.maps[0]);
+      if (spare) S.maps = [];
+      const at = clamp(index == null ? S.maps.length : index, 0, S.maps.length);
+      S.maps.splice(at, 0, map);
+      return true;
     },
 
     /* ---------- 並べ替え・所属・表示 ---------- */

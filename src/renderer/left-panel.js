@@ -2,12 +2,12 @@
    左パネル(選択中の路線の駅リスト)の描画と並べ替え操作。
    (元は src/ui/renderer.js の1ファイル。指示書 §8〜§12 に沿って画面側を分割した)
    =========================================================================== */
-import { core, ui, esc, curLine, save, renderAll, clearBulk } from './ui-state.js';
+import { core, ui, esc, col, idf, curLine, save, renderAll, clearBulk } from './ui-state.js';
 import { centerStation } from './canvas.js';
 
 /* ---------- 左パネル: 選択中の路線の駅(並べ替え) ---------- */
 function stationGlyph(s, l) {
-  const c = s.color || l.color, sh = s.shape || 'circle';
+  const c = col(s.color || l.color), sh = s.shape || 'circle';   // S1b: 色は形を確かめてから入れる
   const body = sh === 'square' ? `<rect x="2" y="2" width="10" height="10" fill="${c}"/>`
     : sh === 'diamond' ? `<polygon points="7,1.5 12.5,7 7,12.5 1.5,7" fill="${c}"/>`
     : `<circle cx="7" cy="7" r="5" fill="${c}"/>`;
@@ -20,7 +20,7 @@ export function renderLeft() {
   const l = curLine();
   const rows = l.stations.map((s, i) => {
     const on = ui.sel && ui.sel.t === 'st' && ui.sel.id === s.id;
-    return `<li data-id="${s.id}" draggable="true"${on ? ' class="on"' : ''}>` +
+    return `<li data-id="${idf(s.id)}" draggable="true"${on ? ' class="on"' : ''}>` +
       `<span class="lhandle" title="ドラッグで並べ替え">⇅</span>` +
       stationGlyph(s, l) +
       `<span class="lname">${esc(s.name)}</span>` +
@@ -30,7 +30,7 @@ export function renderLeft() {
         `<button class="sdown" title="下へ移動"${i === l.stations.length - 1 ? ' disabled' : ''}>↓</button>` +
       '</span></li>';
   }).join('');
-  el.innerHTML = `<h3><i style="background:${l.color}"></i>${esc(l.name)} の駅` +
+  el.innerHTML = `<h3><i style="background:${col(l.color)}"></i>${esc(l.name)} の駅` +
     (l.hidden ? ' <span style="font-size:11px;opacity:.75">(非表示)</span>' : '') +
     (l.lock ? ' <span style="font-size:11px;opacity:.75">(ロック中)</span>' : '') + '</h3>' +
     '<p class="note">上から順に線を引く経路です。↑↓ボタンかドラッグで並べ替えると線の形が変わります(踏切は位置を保ちます)。行をクリックするとその駅を選択して表示を移動します</p>' +

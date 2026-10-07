@@ -1,0 +1,44 @@
+{
+  "maps": [
+    {
+      "id": "m-num",
+      "name": "数値の攻撃",
+      "w": 1e308,
+      "h": -1e308,
+      "lines": [
+        {
+          "id": "l1",
+          "name": "1号線",
+          "color": "#E5352B",
+          "width": "8\" onload=\"alert(1)",
+          "stations": [
+            {
+              "id": "s1",
+              "name": "数値攻撃駅",
+              "x": "1\" onload=\"alert(1)",
+              "y": 1e308,
+              "hub": "yes",
+              "nameX": null,
+              "nameY": "400",
+              "nameRot": 1e308,
+              "links": {}
+            }
+          ],
+          "crossings": [ { "id": "c1", "seg": "0\" onload=\"alert(1)", "t": 42 } ]
+        }
+      ],
+      "roads": [],
+      "stops": [
+        { "id": "p1", "name": "バス停", "x": "abc", "y": 1e308, "kind": "stop" }
+      ],
+      "hubs": [],
+      "boxes": [
+        { "id": "b1", "x": "10", "y": "20", "w": 0, "h": -5, "text": 12345, "fill": "#ffffff" }
+      ],
+      "images": [
+        { "id": "i1", "src": "data:image/webp;base64,AAAA", "x": 0, "y": 0, "w": 100, "h": 100, "opacity": 99, "z": "undefined" }
+      ],
+      "show": { "road": "yes", "stop": 1, "box": null, "img": true }
+    }
+  ]
+}

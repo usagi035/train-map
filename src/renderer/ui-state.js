@@ -5,12 +5,22 @@
 import { S, G, mw, mh, clamp, mkMap, findStationIn, linesOfIn } from '../core/model.js';
 import { dist, segPt } from '../core/geometry.js';
 import { createCore } from '../core/operations.js';
+import { KEYS, migrateLegacyKeys } from './storage.js';
+import { setBanner, clearBanner } from './banner.js';
+import { toast } from './toast.js';
 
 // 状態の読み書き・編集操作はすべて core 経由(画面が直接書き換えない。指示書 §6/§7)
 export const core = createCore();
 
 // HTMLエスケープ(画面表示のための都合なので core には置かない)
 export const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* 出口側の縦の防御(S1b)。読み込み時の検証(sanitize.js)とは別に、
+   テンプレートへ入れる直前でもう一度「値の形」を確かめる。
+   正当なデータならすべて素通りする(表示は変わらない)。 */
+export const col = c => (/^#[0-9a-fA-F]{6}$/.test(c) ? c : '#000000');      // 色(#rrggbb 以外は黒)
+export const num = n => (Number.isFinite(n) ? n : 0);                        // 数値(数値以外は0)
+export const idf = s => (typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s) ? s : '');   // ID(文字列で規則外は空文字)
 
 export const HINTS = {
   select:   '駅・バス停・道路をドラッグして移動 / 空白をドラッグして□で複数選択→Deleteで一括削除 / Deleteキーで削除 / Space+ドラッグで画面移動',
@@ -24,16 +34,27 @@ export const HINTS = {
 };
 
 /* ---------- 状態の読み込み(localStorage の読み書きは画面側の責務) ---------- */
+// 旧キー(railmaps 等)から名前空間つきキーへ移してから読む。旧キーは残す(S3)。
+// ここで失敗(= 書けない環境)した場合は、下の「保存失敗」の知らせへ回す(S5)。
+const migrateOk = migrateLegacyKeys();
+// 読み込んだ保存データは必ずサニタイズを通す(core.importDocument の中)。
+// 直せないときだけ初期状態で始める。ここで書き戻すことは無いので、
+// 保存文字列はユーザーが実際に編集するまで残ったまま(壊したデータは消さない)。
 let stored = null;
-try { stored = JSON.parse(localStorage.getItem('railmaps')); } catch (e) {}
-if (!stored || !Array.isArray(stored.maps) || !stored.maps.length) stored = { maps: [mkMap('路線図 1')] };
-core.importDocument(stored);
+try { stored = JSON.parse(localStorage.getItem(KEYS.maps)); } catch (e) {}
+let bootWarnings = [];
+if (stored && Array.isArray(stored.maps) && stored.maps.length) {
+  try { bootWarnings = core.importDocument(stored); }
+  catch (err) { console.warn('保存データを読み込めなかったため、初期状態で始めます。', err); stored = null; }
+}
+if (!stored || !core.getState().maps.length) core.importDocument({ maps: [mkMap('路線図 1')] });
+if (bootWarnings.length) console.warn('保存データを読み込むときに直した項目:', bootWarnings);
 
 export let ui = { map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: 1, drawing: null, bulk: [], bulkRect: null, bulkMap: null };
 const hm = S.maps.find(m => m.id === decodeURIComponent(location.hash.slice(1)));   // 別ウィンドウで開いたときの路線図
 if (hm) { ui.map = hm.id; ui.line = hm.lines[0].id; ui.open = [hm.id]; }
 else {
-  try { const o = JSON.parse(localStorage.getItem('railopen')); if (Array.isArray(o)) ui.open = o.filter(id => S.maps.some(m => m.id === id)); } catch (e) {}
+  try { const o = JSON.parse(localStorage.getItem(KEYS.open)); if (Array.isArray(o)) ui.open = o.filter(id => S.maps.some(m => m.id === id)); } catch (e) {}
   const om = S.maps.find(m => m.id === ui.open[0]);
   if (om) { ui.map = om.id; ui.line = om.lines[0].id; } else ui.home = true;
 }
@@ -49,32 +70,140 @@ export const linesOf = id => linesOfIn(curMap(), id);
 /* ---------- 履歴 (元に戻す / やり直す) ---------- */
 export const viewNow = () => ({ map: ui.map, line: ui.line });
 let saveTimer = 0;
-let quotaWarned = false;   // 保存失敗の注意は1セッションに1回だけ表示
 export function updateUndoButtons() {
   const u = document.getElementById('undo'), r = document.getElementById('redo');
   if (u) u.disabled = !core.canUndo();
   if (r) r.disabled = !core.canRedo();
 }
-// 保存しつつ、変更前の状態を履歴に積む
-export const save = () => {
+/* ---------- 路線図ごとの「最終更新」(U5) ----------
+   文書本体には足さない(書き出しの JSON 形式を変えないため)。別キー `KEYS.updated` に持つ。
+   - 記録するのは「保存できた変更」だけ(保存に失敗した変更は日時にしない)。
+   - 読み込みは初回 access のとき(lazy)。node のテストでは localStorage が無いので空になる。 */
+let updated = null;
+const updatedMaps = () => {
+  if (!updated) {
+    try { updated = JSON.parse(localStorage.getItem(KEYS.updated)) || {}; } catch (e) { updated = {}; }
+  }
+  return updated;
+};
+const writeUpdated = () => {
+  try { localStorage.setItem(KEYS.updated, JSON.stringify(updated)); }
+  catch (e) { /* 一覧の日時の表示用なので握りつぶす(本体の保存失敗は save() が知らせる) */ }
+};
+/** その路線図の最終更新時刻(まだ無ければ null) */
+export const mapUpdated = id => { const v = updatedMaps()[id]; return typeof v === 'number' ? v : null; };
+/** 保存できた変更を記録する */
+export function touchMap(id) {
+  if (typeof id !== 'string' || !id) return;
+  updatedMaps()[id] = Date.now();
+  writeUpdated();
+}
+/** 削除した路線図の記録を消す */
+export function forgetMap(id) {
+  const u = updatedMaps();
+  if (!(id in u)) return;
+  delete u[id];
+  writeUpdated();
+}
+// まだ日時の無い路線図に記録開始の時刻を付ける(起動時。無くすると一覧の日時が空欄になる)
+export function stampMissing() {
+  const u = updatedMaps(), now = Date.now();
+  let add = false;
+  S.maps.forEach(m => { if (typeof u[m.id] !== 'number') { u[m.id] = now; add = true; } });
+  if (add) writeUpdated();
+}
+
+// 保存しつつ、変更前の状態を履歴に積む。
+// `changedId` は「今回どの路線図が変わったか」(U5 の最終更新の記録用)。
+// 指定が無ければいま編集している路線図。路線図を増やす・複製するなど、一覧側の
+// 操作で「いま開いている地図以外」が変わったときにだけ指定する。
+export const save = (changedId) => {
   clearTimeout(saveTimer); saveTimer = 0;
+  setSavePending(false);   // 保留はここで消える(変化が無くても、書くつもりだった分は終わった)
   const now = core.commit(viewNow());   // 変化が無ければ null(そのときは保存もしない)
   if (!now) return;
-  try { localStorage.setItem('railmaps', now); } catch (e) {
-    // 保存できないと黙っていると消えてしまうので注意を出す(画像を取り込むと容量上限に当たりやすい)
+  let ok = true;
+  try { localStorage.setItem(KEYS.maps, now); localAuthority = false; setSaveFailed(false); } catch (e) {
+    // 保存できないと黙っていると消えるので、直るか書き出をするまで消さない知らせを出す(S5)
     console.warn('自動保存に失敗しました:', e);
-    if (!quotaWarned) {
-      quotaWarned = true;
-      alert('自動保存に失敗しました。\n保存領域の上限に達した可能性があります。\n画像が大きい場合は削除するか、「書き出し」でJSONをバックアップしてください。');
-    }
+    setSaveFailed(true);
+    ok = false;
   }
+  // 保存できた変更だけ「最終更新」として記録する(U5)。失敗した変更は日時にしない
+  if (ok) touchMap(typeof changedId === 'string' && changedId ? changedId : ui.map);
   updateUndoButtons();
 };
 // 文字入力やスライダーは、連続入力をまとめて1回の履歴にする
 export const deferSave = () => {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => { saveTimer = 0; save(); }, 600);
+  setSavePending(true);   // まだ保存していない = 「保存中…」を出す(U7)
 };
+/* ---------- 別タブとの競合(S4) ----------
+   「自分の版を残す」を選ぶと、次に自分の保存が成功するまで相手の版を自動適用しない
+   (選んだ直後に自分の変更が上書きされないようにする)。保存が成功したら通常の同期に戻る。 */
+let localAuthority = false;
+export const keepLocalVersion = () => { localAuthority = true; };
+export const clearLocalAuthority = () => { localAuthority = false; };
+export const isLocalAuthority = () => localAuthority;
+// 自動保存が保留中か(= まだ保存していない変更がある)
+export const pendingSave = () => saveTimer !== 0;
+// 相手の版で上書きしてよいかの判定。busy は「ドラッグ中・道路描画中・入力中」のこと。
+// どれか一つでも当てはまれば、バナーでどちらを使うか選ばせる。
+export const shouldAskRemote = (busy = false) => !!(busy || pendingSave() || localAuthority);
+
+/* ---------- 保存が失敗したときの知らせ(S5) ----------
+   保存できないまま編集を続けていると消えるので、「直す or 書き出す」まで消さない。
+   - 常駐のバナー(赤)+「書き出し」ボタンで、その場からJSONを出せるようにする。
+   - `beforeunload` は失敗している間だけ張る(保存が成功しているときに閉じる確認を出すのは邪魔)。
+   - 次の保存が成功したらフラグとバナーと beforeunload すべてを下ろす。 */
+let saveFailed = false;
+const unloadWhileFailing = e => { e.preventDefault(); e.returnValue = ''; return ''; };
+export function setSaveFailed(on) {
+  const want = !!on;
+  if (saveFailed === want) return;
+  saveFailed = want;
+  if (want) {
+    setBanner('savefail',
+      '自動保存に失敗しています。データが消える前に「書き出し」でJSONを保存してください。',
+      [{ label: '書き出し', onClick: () => { const b = document.getElementById('exp'); if (b) b.click(); }, close: false }],
+      'warn');
+    window.addEventListener('beforeunload', unloadWhileFailing);
+  } else {
+    clearBanner('savefail');
+    window.removeEventListener('beforeunload', unloadWhileFailing);
+  }
+  renderSaveInd();   // ヘッダーの表示も合わせる(U7)
+}
+export const isSaveFailed = () => saveFailed;
+/* ---------- ヘッダーの保存インジケータ(U7) ----------
+   「保存中…(まだ保留がある)/ 保存済み / 保存に失敗」をツールバーに出す。
+   - 失敗の**知らせ**は上の S5 のバナーが担う。こちらは「いまの状態」を見せる表示。
+   - 文言は画面の他の部分と同じ日本語で持つ(指示書は英語のラベルを挙げているが、日本語の画面に
+     英語は混ざらない。i18n は入れない = Part2 の共通ルール)。
+   - 毎回読み上げると邪魔なので live region にはしない(失敗の読み上げはバナーが行う)。 */
+let savePending = false;
+const SAVE_IND = { saving: '保存中…', saved: '保存済み ✓', failed: '保存に失敗' };
+function renderSaveInd() {
+  // テスト(node)から読み込まれると document が無いことがあるので、無いときは何もしない
+  const el = typeof document === 'undefined' ? null : document.getElementById('saveind');
+  if (!el) return;
+  const s = saveFailed ? 'failed' : savePending ? 'saving' : 'saved';
+  if (el.dataset.state === s) return;
+  el.dataset.state = s;
+  el.textContent = SAVE_IND[s];
+}
+/** 「まだ保存していない変更がある(保留中)」を示す */
+export function setSavePending(on) {
+  const want = !!on;
+  if (savePending === want) return;
+  savePending = want;
+  renderSaveInd();
+}
+// 起動時の表示は index.html の初期値(「保存済み ✓」)そのまま。失敗しているときだけ下で上書きする
+// (ここでは document を触らない = テスト(node)からも読み込めるようにするため)
+// 起動時の旧キー移行で書けなかった場合は、ここで最初の1回を知らせる(書けない環境は以降も同じ)
+if (!migrateOk) setSaveFailed(true);
 // 読み込んだ文書ごとに画面の状態をまとめて入れ替える(JSONの読み込み・別ウィンドウとの同期で使う)
 export function replaceUi(next) { ui = next; }
 core.resetHistory(viewNow());
@@ -103,6 +232,15 @@ export function hitLocked(el) {
   }
   return false;
 }
+// 選択中の要素が「編集できない」路線のものか(DOM ではなく選択情報で見る = キーボード操作用)
+// hitLocked(el) と同じ判定を、ui.sel の形で行う
+export function selLocked(sel) {
+  if (!sel) return false;
+  const m = curMap();
+  if (sel.t === 'st') { const s = findStation(sel.id); return !s || isStationLocked(s); }
+  if (sel.t === 'cx') { const o = m.lines.find(x => x.crossings.some(c => c.id === sel.id)); return !!o && !!o.lock; }
+  return false;
+}
 // 表示設定を変えたあと、選択中の要素がまだ見えているか
 export function selVisible(sel) {
   if (!sel) return true;
@@ -119,11 +257,23 @@ export function selVisible(sel) {
   if (sel.t === 'img') return showEl(m, 'img');
   return true;
 }
-// 非表示・ロック中の路線には駅や踏切を追加できない(理由を出して戻す)
+// 非表示・ロック中の路線には駅や踏切を追加できない(理由を出す。直せるならその場で直す)
 export function lineEditBlocked() {
   const l = curLine();
-  if (l.lock) { alert('「' + l.name + '」はロック中です。\n右パネルの 🔒 を解除すると編集できます。'); return true; }
-  if (l.hidden) { alert('「' + l.name + '」は非表示です。\n右パネルの 👁 で表示に戻すと追加できます。'); return true; }
+  if (l.lock) {
+    toast('「' + l.name + '」はロック中です。解除すると編集できます。', {
+      key: 'line-blocked',
+      actions: [{ label: 'ロックを解除', onClick: () => { core.update(l, { lock: false }); save(); renderAll(); } }],
+    });
+    return true;
+  }
+  if (l.hidden) {
+    toast('「' + l.name + '」は非表示です。表示に戻すと追加できます。', {
+      key: 'line-blocked',
+      actions: [{ label: '表示に戻す', onClick: () => { core.update(l, { hidden: false }); save(); renderAll(); } }],
+    });
+    return true;
+  }
   return false;
 }
 // 矩形に重なる要素を集める(駅・乗り換え駅・バス停・踏切・ラベル枠・幹線道路)
@@ -157,11 +307,46 @@ export function pickInBox(m, b) {
   });
   return hit;
 }
+/* ---------- 読み上げ(U4) ----------
+   ツールの切り替えと選択の変化を、見た目を隠したライブリージョン(#live)へ流す。
+   - 同じ文言は流さない(ドラッグ中の再描画で読み上げ続けないため)。
+   - 文字は必ず textContent(CSP と同じ理由: 動かすのは DOM の値だけ)。 */
+let said = '';
+export function announce(text) {
+  if (!text || text === said) return;
+  said = text;
+  const el = document.getElementById('live');
+  if (el) el.textContent = text;
+}
+// 選択中の要素を人が読める言葉にする(読み上げと自動テストで使う)
+export function selLabel(sel) {
+  if (!sel) return '';
+  const m = curMap();
+  if (sel.t === 'st') { const s = findStation(sel.id); return s ? '「' + s.name + '」を選択中' : ''; }
+  if (sel.t === 'stop') { const s = (m.stops || []).find(x => x.id === sel.id); return s ? '「' + s.name + '」を選択中' : ''; }
+  if (sel.t === 'cx') return '踏切を選択中';
+  if (sel.t === 'bx') return 'ラベル枠を選択中';
+  if (sel.t === 'img') return '画像を選択中';
+  if (sel.t === 'road') return '幹線道路を選択中';
+  return '要素を選択中';
+}
+export function announceStatus() {
+  const b = document.querySelector('[data-tool="' + ui.tool + '"]');
+  const tool = b ? b.textContent.trim() : ui.tool;
+  const bulk = getBulk().length;
+  announce(tool + ' / ' + (bulk ? bulk + '件をまとめて選択中' : (selLabel(ui.sel) || '選択なし')));
+}
+
 export function renderTools() {
-  document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === ui.tool));
+  document.querySelectorAll('[data-tool]').forEach(b => {
+    const on = b.dataset.tool === ui.tool;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');   // 「いま押しているモード」を支援技術にも伝える(U3)
+  });
   document.getElementById('hint').textContent = HINTS[ui.tool] || '';
   document.getElementById('cv').style.cursor = ui.tool === 'select' ? 'default' : 'crosshair';
   updateUndoButtons();
+  announceStatus();   // ツールと選択の変化を支援技術へ知らせる(U4)
 }
 /* ---------- 再描画(画面の各モジュールが自分の描画関数を登録する) ---------- */
 const parts = {};   // { tabs, home, canvas, side, left }

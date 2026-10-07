@@ -2,7 +2,8 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <title>路線図エディタ</title>
 <style>
   :root { --ink:#1f2d36; --paper:#f4f6f5; --rule:#d5dcda; --signal:#1f8a5b; }
@@ -10,6 +11,9 @@
   html,body { margin:0; height:100%; }
   body { display:flex; flex-direction:column; color:var(--ink);
          font-family:"Noto Sans JP","Yu Gothic UI","Hiragino Sans","Meiryo",sans-serif; font-size:14px; }
+  /* 読み上げ用:画面には出さないが支援技術には流す領域(U4) */
+  .vh { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden;
+        clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; border:0; }
   header { background:var(--ink); color:#fff; display:flex; flex-direction:column; gap:6px; padding:8px 10px 0; }
   #tabs { display:flex; gap:2px; align-items:flex-end; flex-wrap:wrap; }
   .tab { background:#34454f; color:#cfd9d6; border-radius:6px 6px 0 0; display:flex; align-items:center; gap:6px; padding:0 4px 0 14px; }
@@ -21,24 +25,69 @@
   #addmap { font-size:18px; }
   #home { flex:1; overflow:auto; padding:24px 32px; background:var(--paper); display:none; }
   #home h2 { margin:0 0 12px; font-size:18px; }
-  #home ul { list-style:none; margin:0 0 16px; padding:0; max-width:520px; }
-  #home li { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--rule); }
+  /* 件数と最終更新を出すようになったので、少し広く・折り返せるようにする(U5) */
+  #home ul { list-style:none; margin:0 0 16px; padding:0; max-width:660px; }
+  #home li { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--rule); flex-wrap:wrap; }
   #home li > span:first-child { flex:1; font-weight:700; }
+  #home .meta { flex:1 1 100%; color:#52636c; font-size:12px; }   /* 注記と同じ色(--paper 上 5.7:1、白地なら 6.25:1 = AA) */
+  #home input.hname { flex:1; min-width:140px; font:inherit; font-weight:700; padding:4px 6px;
+                      border:1px solid #8d9c99; border-radius:5px; }
   #home .st { color:var(--signal); font-size:12px; }
   #home button { background:#fff; color:var(--ink); border:1px solid #b9c4c1; border-radius:5px; padding:5px 11px; cursor:pointer; font:inherit; }
-  #tools { display:flex; gap:6px; align-items:center; background:var(--paper); color:var(--ink);
+  #tools { display:flex; gap:6px; align-items:center; background:var(--paper); color:var(--ink); position:relative;
            margin:0 -10px; padding:8px 10px; border-bottom:1px solid var(--rule); flex-wrap:wrap; }
   #tools .sp { flex:1; }
+  /* グループの区切りと、ショートカット一覧のポップアップ(U3) */
+  #tools .sep { flex:none; width:1px; align-self:stretch; margin:3px 4px; background:#c3cecb; }
+  /* 自動保存の状態(U7)。赤は S5 のバナーと同じ色、緑は右パネルの見出しと同じ色(白地で 5.9:1 = AA) */
+  #saveind { flex:none; font-size:12px; font-weight:700; color:#1f6b4c; white-space:nowrap; padding:0 4px; }
+  #saveind[data-state="saving"] { color:#52636c; font-weight:400; }
+  #saveind[data-state="failed"] { color:#8a2b1c; }
+  #keyshelp { font-weight:700; }
+  #keyspop { position:absolute; right:8px; top:100%; z-index:96; max-width:min(440px, calc(100vw - 16px));
+             background:#fff; color:var(--ink); border:1px solid #b9c4c1; border-radius:8px;
+             box-shadow:0 10px 26px rgba(0,0,0,.2); padding:10px 14px; font-size:12.5px; line-height:1.6; }
+  #keyspop[hidden] { display:none; }
+  #keyspop h3 { margin:0 0 6px; font-size:13px; }
+  #keyspop dl { display:grid; grid-template-columns:auto 1fr; gap:3px 14px; margin:0; }
+  #keyspop dt { font-family:ui-monospace, Consolas, monospace; font-weight:700; white-space:nowrap; }
+  #keyspop dd { margin:0; }
+  /* 画像の書き出し設定(U6)。「?」の一覧と同じ置き場所(ツールバー右寄せ) */
+  #exppop { position:absolute; right:8px; top:100%; z-index:96; min-width:250px;
+            max-width:min(440px, calc(100vw - 16px));
+            background:#fff; border:1px solid var(--rule); border-radius:8px;
+            box-shadow:0 6px 24px rgba(31,45,54,.16); padding:12px 14px;
+            display:flex; flex-direction:column; gap:10px; font-size:13px; }
+  #exppop[hidden] { display:none; }
+  #exppop fieldset { border:1px solid var(--rule); border-radius:6px; margin:0; padding:4px 10px 8px;
+                     display:flex; gap:12px; align-items:center; }
+  #exppop legend { font-weight:700; padding:0 5px; }
+  #exppop label { display:flex; align-items:center; gap:5px; cursor:pointer; }
+  #exppop .expbtns { display:flex; gap:8px; }
   button { font:inherit; }
   #tools button, aside button { background:#fff; color:var(--ink); border:1px solid #b9c4c1; border-radius:5px; padding:5px 11px; cursor:pointer; }
   #tools button.on { background:var(--signal); border-color:var(--signal); color:#fff; }
-  #tools button:disabled { opacity:.45; cursor:not-allowed; }
+  /* 無効ボタンは 1.4.3 では対象外だが、0.45 だと 2.6:1 で読みにくい。
+     0.7 に上げて 5.4:1(WCAG AA 4.5:1 を満たす)。灰さは維持して「押せない」は分かる(U4) */
+  #tools button:disabled { opacity:.7; cursor:not-allowed; }
   #tools button:disabled:hover { background:#fff; }
   #tools button:hover:not(.on), aside button:hover { background:#eaf0ee; }
   button:focus-visible, input:focus-visible { outline:2px solid var(--signal); outline-offset:1px; }
   main { flex:1; display:flex; min-height:0; }
-  #stage { flex:1; overflow:auto; background:var(--paper); }
-  #cv { display:block; user-select:none; }
+  #stage { flex:1; overflow:auto; background:var(--paper); position:relative; }   /* position= 空状態の案内(U5)の土台 */
+  #cv { display:block; user-select:none; touch-action:none; }   /* タッチ操作は自前で処理する(ズーム/パン = U1) */
+  /* ---------- 空の路線図の案内(U5) ----------
+     本文は pointer-events:none = 下のキャンバスへクリックが届く。ボタンだけが押せる。
+     文字色 #52636c は --paper(#f4f6f5)上で 約5.7:1 = AA を満たす。 */
+  #empty { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+           justify-content:center; gap:14px; padding:24px; text-align:center;
+           pointer-events:none; user-select:none; color:#52636c; font-size:15px; }
+  #empty[hidden] { display:none; }   /* display:flex の方が [hidden] より強いので明示する */
+  #empty p { margin:0; line-height:1.8; }
+  #empty b { color:var(--ink); }
+  #empty button { pointer-events:auto; background:#fff; color:var(--ink); border:1px solid #8d9c99;
+                  border-radius:6px; padding:8px 16px; cursor:pointer; font:inherit; font-weight:700; }
+  #empty button:hover { background:#eaf0ee; }
   aside { width:270px; border-left:1px solid var(--rule); background:#fff; padding:12px; overflow:auto; }
   /* 左サイドバー(統合): 上=選択中の路線の駅リスト(ここだけがスクロール) / 下=クイック操作(高さ固定)。
      幅は #splleft をドラッグで変えられる(--lw に保存) */
@@ -81,7 +130,10 @@
   /* レイヤー(路線の表示/非表示・ロック・重ね順) */
   #lines li { gap:5px; padding:5px 6px; }
   #lines li.off { background:#f5f7f6; }
-  #lines li.off .lname, #lines li.off > i { opacity:.45; }
+  /* 非表示の路線名は「消えている」ことを出しつつ、文字として読めるように(U4)。
+     0.45 では 2.6:1、0.7 で 5.2:1(WCAG AA 4.5:1)。色見本(> i)は文字ではないので従来どおり */
+  #lines li.off .lname { opacity:.7; }
+  #lines li.off > i { opacity:.45; }
   #lines .lname { flex:1; min-width:0; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #lines .lbtns { display:flex; gap:3px; flex:none; }
   #lines .lyr { padding:2px 5px; font-size:12px; line-height:1.5; flex:none; }
@@ -95,8 +147,10 @@
                 font-size:12.5px; color:var(--ink); cursor:pointer; }
   #quick .qsw > span:first-child { flex:1; min-width:0; }
   #quick .qsw input { position:absolute; opacity:0; width:0; height:0; margin:0; padding:0; border:0; }
+  /* OFF のトラック(#c4cfcb)は白いツマミ・白い背景と 1.6:1 で、状態が見分けられない。
+     #7f8a87 なら白との両方が 3.5:1(WCAG 1.4.11 の非テキスト3:1を満たす)= U4 */
   #quick .qsw .track { position:relative; flex:none; width:34px; height:19px; border-radius:10px;
-                       background:#c4cfcb; transition:background .15s ease; }
+                       background:#7f8a87; transition:background .15s ease; }
   #quick .qsw .track::after { content:""; position:absolute; top:2px; left:2px; width:15px; height:15px;
                               border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.3);
                               transition:transform .15s ease; }
@@ -113,6 +167,11 @@
   .secn { flex:none; max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:700; color:#5c6f77; background:#fff; border:1px solid #cfdbd7; border-radius:9px; padding:0 7px; }
   .seci { flex:none; font-size:10px; color:#6b7c84; transform:rotate(-90deg); transition:transform .15s; }
   .sec.open > .sech .seci { transform:rotate(0deg); }
+  /* 動きを減らす設定に従う(U7):アコーディオンの矢印と、クイック操作パネルのスイッチの動きを止める。
+     ダークテーマは入れない(今回の指示書で禁じられている)。 */
+  @media (prefers-reduced-motion: reduce) {
+    .seci, #quick .qsw .track, #quick .qsw .track::after { transition:none; }
+  }
   .secb { padding:9px; border-top:1px solid #dde6e3; }
   .secb h3 { margin:0 0 6px; font-size:12.5px; }
   .subh { font-size:12px; font-weight:700; color:#3d5058; margin:12px 0 6px; padding-top:9px; border-top:1px dashed #dbe4e1; }
@@ -132,34 +191,95 @@
   .linklist .lname { flex:1; min-width:0; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .linklist .lbtns { display:flex; gap:3px; flex:none; }
   .linklist button { padding:2px 6px; font-size:12px; line-height:1.5; }
-  .linklist button:disabled { opacity:.4; cursor:default; }
+  .linklist button:disabled { opacity:.7; cursor:default; }   /* 押せない↑↓も読める明るさ(U4) */
   .linklist li.on { border-color:#2f7d64; background:#eaf5f1; }
   .linklist .badge { flex:none; font-size:10px; font-weight:700; color:#2f7d64; background:#e3efe9; border-radius:3px; padding:1px 5px; }
   .linklist svg { flex:none; }
   #hint { position:fixed; left:calc(var(--lw, 400px) + 17px); bottom:10px; background:var(--ink); color:#fff; padding:6px 12px; border-radius:5px; font-size:12px; pointer-events:none; }
+  /* 非ブロッキングの案内バナー(src/renderer/banner.js)。S4=タブ間の競合、S5=自動保存の失敗 */
+  #banners { position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:90;
+             display:flex; flex-direction:column; gap:6px; align-items:center;
+             width:max-content; max-width:calc(100vw - 24px); pointer-events:none; }
+  .banner { pointer-events:auto; display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap;
+            background:var(--ink); color:#fff; padding:8px 12px; border-radius:6px;
+            font-size:12.5px; box-shadow:0 4px 12px rgba(0,0,0,.25); }
+  .banner button { font:inherit; font-size:12.5px; font-weight:700; padding:4px 11px; border:1px solid #fff;
+                   background:#fff; color:var(--ink); border-radius:5px; cursor:pointer; }
+  .banner button:hover { background:#e9f2ee; }
+  .banner.warn { background:#8a2b1c; }
+  /* 一時的な知らせ(src/renderer/toast.js)。U2: alert()/confirm() の代わりに、
+     画面を止めず一定時間で自動的に消える。右上に重ね、案内バナー(中央上)とずらす */
+  #toasts { position:fixed; top:8px; right:8px; z-index:95; display:flex; flex-direction:column;
+            gap:8px; align-items:flex-end; max-width:calc(100vw - 16px); pointer-events:none; }
+  .toast { pointer-events:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+           background:var(--ink); color:#fff; padding:9px 13px; border-radius:8px;
+           font-size:12.5px; line-height:1.5; box-shadow:0 6px 18px rgba(0,0,0,.28); }
+  .toast .ttext { flex:1 1 auto; }
+  .toast button { font:inherit; font-size:12.5px; font-weight:700; padding:4px 11px; border:1px solid #fff;
+                  background:transparent; color:#fff; border-radius:999px; cursor:pointer; }
+  .toast button:hover { background:rgba(255,255,255,.18); }
 </style>
 </head>
 <body>
+<!-- 読み上げ用:ツールの切り替えと選択の変化をここで知らせる(U4)。見た目は隠すが、
+     role="status" + aria-live="polite" なので支援技術には流れ、画面の読み上げより先に置く -->
+<div id="live" class="vh" role="status" aria-live="polite"></div>
 <header>
   <div id="tabs"></div>
   <div id="tools">
-    <button data-tool="select">選択・移動</button>
-    <button data-tool="station">駅を追加</button>
-    <button data-tool="hub">乗り換え駅を追加</button>
-    <button data-tool="crossing">踏切を追加</button>
+    <button data-tool="select" title="クリックして選択・ドラッグで移動 (Esc でこのツールへ)">選択・移動</button>
+    <span class="sep" aria-hidden="true"></span>
+    <button data-tool="station" title="空白をクリックして駅を追加">駅を追加</button>
+    <button data-tool="hub" title="駅をクリックして乗り換え駅(他の路線にも同じ駅を置く)">乗り換え駅を追加</button>
+    <button data-tool="crossing" title="線の上に置く (踏切は路線ごとに1つずつ)">踏切を追加</button>
     <button data-tool="busstop" title="幹線道路とは独立したバス停">バス停を追加</button>
     <button data-tool="terminal" title="幹線道路とは独立したバスターミナル">バスターミナルを追加</button>
-    <button data-tool="road" title="クリックで頂点を追加して道路を引く">幹線道路を引く</button>
-    <button data-tool="box">ラベル枠を追加</button>
+    <button data-tool="road" title="クリックで頂点を追加して道路を引く (Enter / ダブルクリックで確定、Esc で中止、Ctrl+Z で1点戻す)">幹線道路を引く</button>
+    <button data-tool="box" title="ドラッグして四角い枠(地図の凡例など)を追加">ラベル枠を追加</button>
     <button id="addimg" title="画像ファイル(PNG・JPGなど)を配置して、移動・リサイズ・下敷きができます">画像を追加</button>
-    <button id="del">選択を削除</button>
+    <span class="sep" aria-hidden="true"></span>
+    <button id="del" title="選択中の要素を削除 (Delete / Backspace。□で複数選択するとまとめて)">選択を削除</button>
     <button id="undo" title="元に戻す (Ctrl+Z)">↶ 元に戻す</button>
     <button id="redo" title="やり直す (Ctrl+Y / Ctrl+Shift+Z)">↷ やり直す</button>
     <span class="sp"></span>
-    <button id="zout" title="縮小">－</button><span id="zlabel" style="min-width:44px;text-align:center">100%</span><button id="zin" title="拡大">＋</button><button id="zreset" title="等倍に戻す">等倍</button>
-    <button id="exp">書き出し</button>
-    <button id="imp">読み込み</button>
-    <button id="expimg" title="PNG画像として保存">画像書き出し</button>
+    <button id="zout" title="縮小 (Ctrl+ホイールでもズームできます)">－</button><span id="zlabel" style="min-width:44px;text-align:center">100%</span><button id="zin" title="拡大 (Ctrl+ホイールでもズームできます)">＋</button><button id="zreset" title="等倍に戻す">等倍</button>
+    <span class="sep" aria-hidden="true"></span>
+    <button id="exp" title="路線図をJSONファイルで保存">書き出し</button>
+    <button id="imp" title="JSONファイルを開く">読み込み</button>
+    <button id="expimg" title="PNG / SVG 画像として保存(大きさと背景の透過を選べます)" aria-expanded="false" aria-controls="exppop">画像書き出し</button>
+    <!-- 画像の書き出し設定(U6): 倍率 1×/2×/3×・背景の透過・PNG / SVG。場所を押す・Esc で閉じる -->
+    <div id="exppop" hidden role="group" aria-label="画像の書き出し設定">
+      <fieldset class="expsizes">
+        <legend>大きさ</legend>
+        <label><input type="radio" name="expsize" value="1" checked>1×</label>
+        <label><input type="radio" name="expsize" value="2">2×</label>
+        <label><input type="radio" name="expsize" value="3">3×</label>
+      </fieldset>
+      <label class="exptrans"><input type="checkbox" id="exptrans">背景を透過にする</label>
+      <div class="expbtns">
+        <button id="exppng" title="選んだ大きさの PNG 画像として保存">PNGで書き出す</button>
+        <button id="expsvg" title="SVG(拡大してもぼけない形式)として保存">SVGで書き出す</button>
+      </div>
+    </div>
+    <span class="sep" aria-hidden="true"></span>
+    <!-- 自動保存の状態(U7): 保存中…(保留あり)/ 保存済み / 保存に失敗。失敗の知らせ自体は S5 のバナーが担う -->
+    <span id="saveind" data-state="saved" title="自動保存の状態(失敗すると赤くなります)">保存済み ✓</span>
+    <button id="keyshelp" title="ショートカットの一覧" aria-expanded="false" aria-controls="keyspop">?</button>
+    <div id="keyspop" hidden>
+      <h3>ショートカット</h3>
+      <dl>
+        <dt>Delete / Backspace</dt><dd>選択中の駅・道路・ラベル枠などを削除(□で複数選択するとまとめて)</dd>
+        <dt>Esc</dt><dd>道路の描画を中止 → □選択を解除 → 「選択・移動」へ戻る</dd>
+        <dt>Enter</dt><dd>描画中の幹線道路を確定(ダブルクリック・ダブルタップでも)</dd>
+        <dt>Ctrl + Z / Ctrl + Y</dt><dd>元に戻す / やり直す(Ctrl+Shift+Z でもやり直し)</dd>
+        <dt>Space + ドラッグ</dt><dd>画面をスクロール(中ボタンドラッグでも可)</dd>
+        <dt>Ctrl + ホイール</dt><dd>カーソル位置を基準にズーム</dd>
+        <dt>← / →</dt><dd>サイドバーの幅を10px 変える(Shift 付きは1px)</dd>
+        <dt>Home / End / Enter</dt><dd>ハンドルを 最小 / 最大 / 既定 へ</dd>
+        <dt>Alt + W</dt><dd>表示中の路線図を閉じる(タブの「✕」と同じ)</dd>
+        <dt>タッチ 1本指 / 2本指</dt><dd>いま選んでいるツールの操作 / ズームとパン</dd>
+      </dl>
+    </div>
     <input type="file" id="file" accept=".json" hidden>
     <input type="file" id="imgfile" accept="image/*" hidden>
   </div>
@@ -171,7 +291,14 @@
   </div>
   <div class="split" id="splleft" role="separator" aria-orientation="vertical" tabindex="0"
        aria-label="左サイドバーの幅" title="ドラッグで左サイドバーの幅を変更(ダブルクリックで既定値)"></div>
-  <div id="stage"><svg id="cv" width="2400" height="1600" viewBox="0 0 2400 1600"></svg></div>
+  <div id="stage"><svg id="cv" width="2400" height="1600" viewBox="0 0 2400 1600" role="application" tabindex="0" aria-label="路線図の編集キャンバス(Tab で要素を順に選び、矢印キーで移動、Delete で削除)"></svg>
+    <!-- 空の路線図への案内(U5)。本文は pointer-events:none なので、下のキャンバスへの
+         クリック(「駅を追加」→ クリック)は通る。ボタンだけが押せる -->
+    <div id="empty" hidden>
+      <p>この路線図はまだ空です。<b>「駅を追加」</b>を押してから、キャンバスをクリックすると最初の駅が置けます。</p>
+      <button id="loadsample" title="同梱しているサンプルの路線図をこの路線図に入れる">サンプルの路線図を読み込む</button>
+    </div>
+  </div>
   <div class="split" id="splright" role="separator" aria-orientation="vertical" tabindex="0"
        aria-label="右サイドバーの幅" title="ドラッグで右サイドバーの幅を変更(ダブルクリックで既定値)"></div>
   <aside id="side"></aside>

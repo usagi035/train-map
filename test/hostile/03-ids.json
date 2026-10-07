@@ -1,0 +1,54 @@
+{
+  "maps": [
+    {
+      "id": "m-id",
+      "name": "IDの攻撃",
+      "lines": [
+        {
+          "id": "l1\" onclick=\"alert(1)",
+          "name": "1号線",
+          "color": "#E5352B",
+          "stations": [
+            {
+              "id": "s1\" onclick=\"alert(1)",
+              "name": "壊れたID駅",
+              "x": 200,
+              "y": 300,
+              "hub": false,
+              "links": {}
+            },
+            {
+              "id": "s1\" onclick=\"alert(1)",
+              "name": "重複したID駅",
+              "x": 400,
+              "y": 300,
+              "hub": false,
+              "links": {
+                "l1\" onclick=\"alert(1)": [ "s1\" onclick=\"alert(1)" ],
+                "存在しない路線": [ "存在しない駅" ]
+              }
+            }
+          ],
+          "crossings": [
+            { "id": "s1\" onclick=\"alert(1)", "seg": 0, "t": 0.5, "name": "踏切" }
+          ]
+        }
+      ],
+      "roads": [],
+      "stops": [],
+      "hubs": [
+        {
+          "id": "s1\" onclick=\"alert(1)",
+          "name": "重複したIDの乗り換え駅",
+          "x": 600,
+          "y": 300,
+          "hub": true,
+          "links": { "-": [ "s1\" onclick=\"alert(1)" ] }
+        }
+      ],
+      "boxes": [],
+      "images": [],
+      "show": { "road": true, "stop": true, "box": true, "img": true }
+    }
+  ]
+}
