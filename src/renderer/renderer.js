@@ -5,7 +5,7 @@
 import { S, G, mw, mh, clamp, mkMap, findStationIn, linesOfIn, lw, isDark, BG, SHAPES } from '../core/model.js';
 import { dist, segPt } from '../core/geometry.js';
 import { LIMITS, safeFilename } from '../core/sanitize.js';
-import { core, ui, replaceUi, esc, curMap, curLine, findStation, linesOf, viewNow, updateUndoButtons,
+import { core, ui, replaceUi, esc, num, curMap, curLine, findStation, linesOf, viewNow, updateUndoButtons,
          setRender,
          save, deferSave, getBulk, clearBulk, rectOf, pickInBox, isStationLocked, hitLocked, selLocked,
          lineEditBlocked,
@@ -566,11 +566,13 @@ document.getElementById('tools').addEventListener('click', e => {
   if (b.id === 'imp') document.getElementById('file').click();
   if (b.id === 'addimg') { imgPick.replaceId = null; document.getElementById('imgfile').click(); }
   if (b.id === 'exp') {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(core.getState(), null, 2)], { type: 'application/json' }));
-    a.download = jsonFileName(); a.click(); URL.revokeObjectURL(a.href);
+    // 書き出した直後に URL を捨てると取りこぼすブラウザがあるので、少し待ってから捨てる(U6)
+    download(new Blob([JSON.stringify(core.getState(), null, 2)], { type: 'application/json' }), jsonFileName());
   }
-  if (b.id === 'expimg') exportImage();
+  if (b.id === 'expimg') {
+    e.stopPropagation();   // 押した瞬間に document の「外側を押すと閉じる」へ届いて閉まらないように
+    setExpPop(exppop.hidden);
+  }
 });
 document.getElementById('file').addEventListener('change', e => {
   const f = e.target.files[0]; if (!f) return;
@@ -690,28 +692,71 @@ document.getElementById('imgfile').addEventListener('change', e => {
   if (f) importImageFile(f, rid);
 });
 
-// SVGキャンバスをPNG画像として保存
-function exportImage() {
-  const svg = document.getElementById('cv');
-  const xml = new XMLSerializer().serializeToString(svg);
-  const svg64 = btoa(unescape(encodeURIComponent(xml)));
+/* ---------- 画像の書き出し(U6: 倍率・背景の透過・SVG) ----------
+   出力する中身は「生きているキャンバス」を書き換えずに作る:
+   `cloneNode(true)` したクローンからだけ選択の枠(data-chrome)を取り除く。 */
+const expimg = document.getElementById('expimg'), exppop = document.getElementById('exppop');
+function setExpPop(on) {
+  exppop.hidden = !on;
+  expimg.setAttribute('aria-expanded', on ? 'true' : 'false');
+}
+document.addEventListener('click', e => { if (!exppop.hidden && !exppop.contains(e.target)) setExpPop(false); });
+window.addEventListener('keydown', e => { if (e.key === 'Escape' && !exppop.hidden) setExpPop(false); });
+document.getElementById('exppng').addEventListener('click', () => { setExpPop(false); exportImage('png'); });
+document.getElementById('expsvg').addEventListener('click', () => { setExpPop(false); exportImage('svg'); });
+// 選んだ倍率(1× / 2× / 3×)。1× は従来どおりの大きさ
+const expScale = () => {
+  const r = document.querySelector('#exppop input[name="expsize"]:checked');
+  const n = r ? parseInt(r.value, 10) : 1;
+  return n >= 1 && n <= 3 ? n : 1;
+};
+
+// 書き出し用のクローンを作る(**生きているキャンバスには絶対に触れない**)
+function exportClone(scale, transparent) {
+  const clone = document.getElementById('cv').cloneNode(true);
+  clone.querySelectorAll('[data-chrome]').forEach(n => n.remove());   // 選択の枠・ハンドル・□の枠・描画中プレビュー
+  if (transparent) { const bg = clone.querySelector('[data-bg]'); if (bg) bg.remove(); }
+  // 画像として読ませるときの解像度は SVG の width/height で決まる。ズームに引きずられず
+  // 「マップの大きさ × 倍率」にそろえる(1× で等倍、倍率が上がってもぼやけない)
+  const w = num(mw(curMap())), h = num(mh(curMap()));
+  clone.setAttribute('width', w * scale);
+  clone.setAttribute('height', h * scale);
+  clone.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  // 単体で開いても同じ見えにする(SVG は HTML の書体を継承しないので、書体を埋め込む)
+  clone.setAttribute('font-family', getComputedStyle(document.body).fontFamily);
+  return clone;
+}
+// SVG の文字列にする。XML として読めるよう xmlns が無ければ足す
+function svgText(clone) {
+  const s = new XMLSerializer().serializeToString(clone);
+  return /^<svg[^>]*\sxmlns=/.test(s) ? s : s.replace(/^<svg\b/, '<svg xmlns="http://www.w3.org/2000/svg"');
+}
+// ダウンロードを開始してから少し待って URL を捨てる。
+// `a.click()` の直後に消すと失敗するブラウザがある(U6)ので、必ず待つ。
+function download(blob, name) {
+  const a = document.createElement('a');
+  const u = URL.createObjectURL(blob);
+  a.href = u; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(u), 1000);
+}
+// SVGキャンバスを PNG または SVG として保存
+function exportImage(kind) {
+  const m = curMap(), scale = expScale(), transparent = document.getElementById('exptrans').checked;
+  const clone = exportClone(scale, transparent);
+  if (kind === 'svg') {
+    download(new Blob([svgText(clone)], { type: 'image/svg+xml;charset=utf-8' }), safeFilename(m.name) + '.svg');
+    return;
+  }
+  const svg64 = btoa(unescape(encodeURIComponent(svgText(clone))));
   const img = new Image();
   img.onload = () => {
-    const m = curMap(), cw = mw(m), ch = mh(m);
+    const w = num(mw(m)), h = num(mh(m));
     const canvas = document.createElement('canvas');
-    canvas.width = cw; canvas.height = ch;
+    canvas.width = w * scale; canvas.height = h * scale;   // 倍率(U6)
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = m.bg || BG;
-    ctx.fillRect(0, 0, cw, ch);
-    ctx.drawImage(img, 0, 0, cw, ch);
-    canvas.toBlob(blob => {
-      if (!blob) return;
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = safeFilename(curMap().name) + '.png';
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }, 'image/png');
+    if (!transparent) { ctx.fillStyle = m.bg || BG; ctx.fillRect(0, 0, canvas.width, canvas.height); }   // 透過なら塗らない
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(blob => { if (blob) download(blob, safeFilename(m.name) + '.png'); }, 'image/png');
   };
   img.onerror = () => toast('画像の書き出しに失敗しました。別の画像で試してください。', { key: 'expimg' });
   img.src = 'data:image/svg+xml;base64,' + svg64;

@@ -89,10 +89,12 @@ test('S6-5 safeFilename は区切り記号・制御文字を落とし、80文字
 test('S6-6 書き出しは「日時入りJSON」+「地図名は safeFilename 経由」、referrer は no-referrer', () => {
   // JSON: railmaps-YYYYMMDD-HHmm.json(地図名は使わない = 上書きで版が分からなくなるのを防ぐ)
   assert.match(rsrc, /const jsonFileName = \(\) => `railmaps-\$\{stamp\(\)\}\.json`;/, 'JSONのファイル名が指定形式でない');
-  assert.match(rsrc, /a\.download = jsonFileName\(\)/, 'JSON書き出しがファイル名ヘルパを使っていない');
+  // 保存は共通の download() 経由(U6: revoke を遅らせるため)。名前の付け方自体は変えない
+  assert.match(rsrc, /jsonFileName\(\)\);/, 'JSON書き出しがファイル名ヘルパを使っていない');
+  assert.match(rsrc, /a\.download = name;/, 'download() が渡された名前を使っていない');
   assert.ok(!/a\.download = 'railmaps\.json'/.test(rsrc), '固定名 railmaps.json が残っている');
   // PNG: 地図名(入力値)は必ず safeFilename を通す
-  assert.match(rsrc, /a\.download = safeFilename\(curMap\(\)\.name\) \+ '\.png'/, 'PNGの名前が未加工');
+  assert.match(rsrc, /safeFilename\(m\.name\) \+ '\.png'/, 'PNGの名前が未加工');
   assert.ok(!/a\.download = \(curMap\(\)\.name \|\| '路線図'\)/.test(rsrc), '地図名をそのまま使っている');
   // 外部へ送る参照情報を出さない
   assert.match(html, /<meta name="referrer" content="no-referrer">/, 'referrer meta が無い');

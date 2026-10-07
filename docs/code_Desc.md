@@ -149,7 +149,8 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
   <div id="tools">           … ツールバー(グループごとに `.sep` で区切る = U3)。
                                 [選択] | [追加: data-tool 群 +#addimg] |
                                 [#del #undo #redo] | `.sp`(余白) | [ズーム #zout #zlabel #zin #zreset] |
-                                [#exp #imp #expimg] | [? #keyshelp → #keyspop 一覧]、
+                                [#exp #imp #expimg → #exppop 書き出し設定(倍率・透過・PNG/SVG = U6)] |
+                                [? #keyshelp → #keyspop 一覧]、
                                 非表示の #file(JSON) と #imgfile(画像)
 <main>
   <div id="leftcol">         … 左サイドバー(1列に統合)
@@ -192,6 +193,7 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 | ツールバー | `#tools button` / `.on` | 押下中は緑 |
 | 一覧画面 | `#home li` / `.st` / `.meta` / `input.hname` | 路線図リスト(1行に名前・状態・4ボタン、**1行目に件数と最終更新 `.meta`**、名前変更は行の中だけ入力欄へ差し替える = U5) |
 | 空状態の案内 | `#empty` / `#empty[hidden]` / `#empty button` | キャンバス中央に出す案内(U5)。本文は `pointer-events:none`・`user-select:none`、色は注記と同じ `#52636c`(`--paper` 上 5.7:1 = AA)。`display:flex` が `[hidden]` より強いので `#empty[hidden]{display:none}` で消す |
+| 画像書き出しの設定 | `#exppop` / `#exppop[hidden]` / `fieldset` / `.expbtns` | 「画像書き出し」の下に開く設定(U6)。置き場所は `#keyspop` と同じ(ツールバー右寄せ・`position:absolute; top:100%`)。倍率ラジオ(1×/2×/3×)・透過チェック・PNG/SVG ボタン |
 | パネル共通 | `aside label` / `.row` / `.note` | ラベル・横並び行・補足文 |
 | 左右リスト | `#lines` `#roadlist` `#imglist` `.linklist` | 行・選択 `.on`・ハンドル `.lhandle` |
 | レイヤー操作 | `#lines .lyr` / `.lyr:disabled` / `#lines li.off` | 👁🔒↑↓ ボタン、非表示行の薄表示 |
@@ -339,7 +341,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `renderTabs()` | タブ行を生成(選択中 `.on`、✕、`＋`、`一覧`) |
 | `renderHome()` | 路線図一覧(U5)。1行に 名前 `.hname` / 状態 `.st` / 「開く」「複製」「名前を変更」「削除」 / **1行目に件数と最終更新 `.meta`**(`describeMap()` = 路線・駅・バス停・幹線道路・ラベル枠・画像の0件以外 + `最終更新 YYYY/MM/DD hh:mm`) |
 | `renderTools()` | ツールボタンの `.on` 切替 + **`aria-pressed`(「いま押しているモード」= U3)**、ヒント文、カーソル、Undo/Redo 有効化、**`announceStatus()`(ツールと選択を読み上げ領域へ = U4)** |
-| **`renderCanvas()`** | まず `blankMap(m)` で**空のときだけ `#empty`(案内)を出し入れ**(U5。空のあいだは `#stage` のスクロールを 0 に戻す = 案内が中央に来る)。続けて SVG を文字列生成で**全書き換え**。順序: 背景+グリッド → 画像(背面/back) → ラベル枠 → 幹線道路 → 描画中プレビュー → 踏切の道路バー → **線路+駅間隔の数字** → 踏切記号 → **接続線(1本化)** → **駅** → バス停 → 画像(前面/front) → □選択の枠とハイライト。非表示路線・非表示種類は描かない。選択中は破線の枠とリサイズ用 ■ を足す |
+| **`renderCanvas()`** | まず `blankMap(m)` で**空のときだけ `#empty`(案内)を出し入れ**(U5。空のあいだは `#stage` のスクロールを 0 に戻す = 案内が中央に来る)。続けて SVG を文字列生成で**全書き換え**。順序: 背景+グリッド → 画像(背面/back) → ラベル枠 → 幹線道路 → 描画中プレビュー → 踏切の道路バー → **線路+駅間隔の数字** → 踏切記号 → **接続線(1本化)** → **駅** → バス停 → 画像(前面/front) → □選択の枠とハイライト。非表示路線・非表示種類は描かない。選択中は破線の枠とリサイズ用 ■ を足す。**選択の枠・ハンドル・□の枠・描画中プレビューには `data-chrome="1"`、背景の四角には `data-bg="1"` を付ける**(U6: 書き出しはクローン側で `data-chrome` だけを取り除く = 生きているキャンバスは書き換えない) |
 | └ 内部 `drawImages(zone)` | 画像要素の描画。**back かつ非選択のみ `pointer-events:none`**(下の要素を選べるように) |
 | └ 内部 `drawStation(s, l)` | 駅の形(丸/二重丸/四角/ひし形)・ハブの点線・選択枠・駅名(`nameX/nameY/nameRot` 回転) |
 | └ 内部 `conn(s)` | 駅の `links` から接続線を描く。`drawnConn` で `from>to` の重複を除き**常に1本だけ**。色と太さは接続先の駅の路線(路線外はグレー) |
@@ -404,7 +406,9 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 
 | 箇所 | 動作 |
 | --- | --- |
-| `#tools click` | ツール切替(道路描画中は先に確定)、`#del` 削除、`#undo`/`#redo`、ズーム(#zin/#zout/#zreset)、`#imp`→JSON読込ダイアログ、`#addimg`→画像ダイアログ、`#exp`→**JSON書き出し**(`railmaps-YYYYMMDD-HHmm.json` = 日時入り)、`#expimg`→PNG書き出し(名前は地図名を `safeFilename()` で加工 = S6②)。※ ボタンは `blur()` して Enter/Space の誤爆を防止 |
+| `#tools click` | ツール切替(道路描画中は先に確定)、`#del` 削除、`#undo`/`#redo`、ズーム(#zin/#zout/#zreset)、`#imp`→JSON読込ダイアログ、`#addimg`→画像ダイアログ、`#exp`→**JSON書き出し**(`railmaps-YYYYMMDD-HHmm.json` = 日時入り)、`#expimg`→**書き出し設定(#exppop)の開閉**(U6。押した瞬間は `e.stopPropagation()` して「外側を押すと閉じる」に届かないようにする)。※ ボタンは `blur()` して Enter/Space の誤爆を防止 |
+| `#exppng` / `#expsvg` click | 設定を閉じて `exportImage('png')` / `exportImage('svg')`(U6)。倍率は `expScale()`(1〜3)、`#exptrans` が ON なら背景を塗らない |
+| `#exppop` の外側 click / Esc | 設定を閉じる(「?」の一覧と同じ扱い。他の Esc の挙動はそのまま) |
 | `#keyshelp` click / Esc / 場所の click | 「?」で**ショートカット一覧(#keyspop)を開閉**(U3)。`aria-expanded` を追従させ、Esc と一覧の外を押すと閉じる(他の Esc の挙動はそのまま) |
 | `#file change` | **10MB を超えたら読む前に中止**(S6)→ JSON を parse → `sanitizeDocument()` → `migrate()` → `ui` を初期化 → `save()`。直せない文書なら alert |
 | `#imgfile change` | `importImageFile(file, imgReplaceId)` を呼んで即クリア |
@@ -462,7 +466,11 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `checkQuota()` | スナップが4.5MBを超えたら「上限に近づいている」alert |
 | `importImageFile(file, replaceId)` | **型の許可リスト(png/jpeg/webp/gif)・15MB・5000万画素を、読む前/デコード前/canvasへ描く前に検査**(S6。`accept` 属性は強制しないのでコードで見る。**SVG は専用のメッセージで拒否**) → FileReader → Image。**最長辺1600px に縮小**(または400KB超)して canvas から `image/webp` 0.85(WebP非対応環境はPNG)に再エンコード → `replaceId` あれば差し替え(位置・大きさはそのまま)、無ければ**表示中画面の中央に 最長辺900px で配置**。`show.img = true` に復帰、`ensureRoom`、`checkQuota()` |
 | `persistOpen()` | `train-map:v1:open` へ開いているタブを保存(hash 付き=別ウィンドウでは保存しない) |
-| `exportImage()` | SVG を serialize → base64 → Image → canvas に背景色ごと描画 → **PNG をダウンロード**(ファイル名 = `safeFilename(地図名).png`)
+| `exportImage(kind)` | **`exportClone()` で作ったクローンだけ**を serialize(U6)。`kind='svg'` は `image/svg+xml` で `safeFilename(地図名).svg` をダウンロード、`'png'` は base64 → Image → canvas(**倍率分の大きさ**、`#exptrans` が OFF のときだけ背景色を塗る)→ `download()` で `safeFilename(地図名).png`。**選択の枠は出さない** |
+| `exportClone(scale, transparent)` | `#cv` を `cloneNode(true)` してから、クローン側の `[data-chrome]`(選択の枠・ハンドル・□の枠・描画中プレビュー)を取り除く。**透過なら `[data-bg]`(背景の四角)も取り除く**。幅/高さ = マップの大きさ × 倍率、`viewBox` = マップ座標(= **ズームに引きずられない**)、`font-family` を埋め込む。**生きているキャンバスには一切触れない** |
+| `svgText(clone)` | `XMLSerializer` で直列化し、`xmlns` が無ければ補う(SVG を単体で開ける形にする) |
+| `download(blob, name)` | `createObjectURL` → `a.click()` → **`setTimeout(..., 1000)` で revoke**(直後に消すと取りこぼすブラウザがある = U6)。JSON / PNG / SVG の3つがすべてこの経由 |
+| `expScale()` | 選択中のラジオ(1×/2×/3×)を 1〜3 の範囲で返す(既定 1× = 従来どおりの大きさ) |
 
 ### 5.13 路線図タブの管理(L1328〜1372)
 

@@ -112,7 +112,7 @@ let ui = { map, line, sel, tool, open, home, zoom, drawing, bulk, bulkRect, bulk
 | 駅の並べ替え | `moveStation()` L756 ← 左パネル `click` L1649 / `drop` L1674 |
 | 選択を削除 / Undo / Redo | ツールバー `click` L1208-1231 |
 | JSON 読み込み | `#file` `change` L1232 → `migrate()` + `S` 差し替え |
-| JSON / PNG 書き出し | `#exp` L1225 / `exportImage()` L1303(**状態は変えない**) |
+| JSON / PNG / SVG 書き出し | `#exp` → `download()`(JSON)、`#expimg` → `#exppop` を開き、`#exppng` / `#expsvg` → `exportImage(kind)`(U6)。**状態は変えない** = 書き出す中身は `#cv` を `cloneNode(true)` した**クローン側**で作り、`data-chrome`(選択の枠・ハンドル・□の枠・描画中プレビュー)だけを取り除く。倍率 1×/2×/3× と背景の透過はポップアップの選択、object URL は `download()` で**開始から1秒後に revoke** |
 | タブ開閉・路線図の新規/削除 | `openMap` L1328・`closeTab` L1333・`newMap` L1342・`deleteMap` L1343 |
 | 別ウィンドウからの取り込み | `storage` L1688(**`S` を丸ごと差し替え、履歴もリセット**) |
 | ツールバーのグループ分け・「?」のショートカット一覧(U3) | `index.html` の `.sep` / `#keyshelp` / `#keyspop` + `renderTools()` の `aria-pressed`(**状態は変えない**) |

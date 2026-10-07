@@ -30,8 +30,11 @@ export function renderCanvas() {
   }
   applyZoom();
   const cw = num(mw(m)), ch = num(mh(m));   // S1b: 数値であることを確認してから入れる
+  // 選択の枠・ハンドル・□の枠・描画中のプレビューには `data-chrome="1"`、
+  // 背景の四角には `data-bg="1"` を付ける。**書き出し(U6)はクローン側で data-chrome だけを
+  // 取り除く**ので、生きているキャンバスは書き換えない(書き出し中に画面がチラつかない)。
   let h = `<defs><pattern id="g" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="${fg}" stroke-opacity=".1" stroke-width="1"/></pattern></defs>` +
-          `<rect width="${cw}" height="${ch}" fill="${bg}"/><rect width="${cw}" height="${ch}" fill="url(#g)"/>` +
+          `<rect data-bg="1" width="${cw}" height="${ch}" fill="${bg}"/><rect width="${cw}" height="${ch}" fill="url(#g)"/>` +
           `<rect width="${cw}" height="${ch}" fill="none" stroke="${fg}" stroke-opacity=".35" stroke-width="2" stroke-dasharray="8 6"/>`;
   // 画像要素(背面=下敷き / 前面)。選択中は枠とリサイズ用の■を表示する
   const drawImages = zone => (m.images || []).filter(im => (im.z || 'back') === zone).forEach(im => {
@@ -42,9 +45,9 @@ export function renderCanvas() {
     const pe = (zone === 'back' && !sel) ? ' pointer-events="none"' : '';
     h += `<g data-t="img" data-id="${idf(im.id)}"${pe}>` +
          `<image href="${esc(im.src)}" x="${X}" y="${Y}" width="${W}" height="${H}" opacity="${OP}" preserveAspectRatio="none"/>` +
-         (sel ? `<rect x="${X - 3}" y="${Y - 3}" width="${W + 6}" height="${H + 6}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` +
-                `<rect data-t="imgr" data-id="${idf(im.id)}" x="${X + W - 6}" y="${Y + H - 6}" width="12" height="12" fill="${fg}" style="cursor:nwse-resize"/>` +
-                `<rect data-t="imgr" data-id="${idf(im.id)}" x="${X + W - 22}" y="${Y + H - 22}" width="44" height="44" fill="transparent" pointer-events="all" style="cursor:nwse-resize"/>` : '') + '</g>';
+         (sel ? `<rect data-chrome="1" x="${X - 3}" y="${Y - 3}" width="${W + 6}" height="${H + 6}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` +
+                `<rect data-chrome="1" data-t="imgr" data-id="${idf(im.id)}" x="${X + W - 6}" y="${Y + H - 6}" width="12" height="12" fill="${fg}" style="cursor:nwse-resize"/>` +
+                `<rect data-chrome="1" data-t="imgr" data-id="${idf(im.id)}" x="${X + W - 22}" y="${Y + H - 22}" width="44" height="44" fill="transparent" pointer-events="all" style="cursor:nwse-resize"/>` : '') + '</g>';
   });
   drawImages('back');   // 背面は道路・ラベル枠・線路より下に敷く
   (m.boxes || []).forEach(b => {
@@ -54,7 +57,7 @@ export function renderCanvas() {
     const fs = Math.max(8, Math.min(14, H - 8, (W - 8) / Math.max(1, n)));
     h += `<g data-t="bx" data-id="${idf(b.id)}"><rect x="${X}" y="${Y}" width="${W}" height="${H}" rx="3" fill="${col(b.fill)}" fill-opacity=".92" stroke="${fg}" stroke-opacity=".45" stroke-width="1.5"/>` +
          (b.text ? `<text x="${X + W / 2}" y="${Y + H / 2 + fs * 0.35}" text-anchor="middle" font-size="${fs}" font-weight="700" fill="${tc}">${esc(b.text)}</text>` : '') +
-         (sel ? `<rect x="${X - 3}" y="${Y - 3}" width="${W + 6}" height="${H + 6}" rx="4" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/><rect data-t="bxr" data-id="${idf(b.id)}" x="${X + W - 6}" y="${Y + H - 6}" width="12" height="12" fill="${fg}" style="cursor:nwse-resize"/><rect data-t="bxr" data-id="${idf(b.id)}" x="${X + W - 22}" y="${Y + H - 22}" width="44" height="44" fill="transparent" pointer-events="all" style="cursor:nwse-resize"/>` : '') + '</g>';
+         (sel ? `<rect data-chrome="1" x="${X - 3}" y="${Y - 3}" width="${W + 6}" height="${H + 6}" rx="4" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/><rect data-chrome="1" data-t="bxr" data-id="${idf(b.id)}" x="${X + W - 6}" y="${Y + H - 6}" width="12" height="12" fill="${fg}" style="cursor:nwse-resize"/><rect data-chrome="1" data-t="bxr" data-id="${idf(b.id)}" x="${X + W - 22}" y="${Y + H - 22}" width="44" height="44" fill="transparent" pointer-events="all" style="cursor:nwse-resize"/>` : '') + '</g>';
   });
   // 0) 幹線道路(背景・独立要素)
   (m.roads || []).forEach(r => {
@@ -65,8 +68,8 @@ export function renderCanvas() {
          `<polyline points="${pts}" fill="none" stroke="${col(r.color)}" stroke-width="${num(r.width)}" stroke-linecap="round" stroke-linejoin="round"/>` +
          `<polyline points="${pts}" fill="none" stroke="#ffffff" stroke-opacity=".85" stroke-width="${Math.max(2, num(r.width) - 7)}" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>`;
     if (sel) {
-      h += `<polyline points="${pts}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3" pointer-events="none"/>` +
-           r.pts.map((p, i) => `<rect data-t="roadpt" data-id="${idf(r.id)}" data-i="${i}" x="${num(p.x) - 5}" y="${num(p.y) - 5}" width="10" height="10" fill="#fff" stroke="${fg}" stroke-width="2" style="cursor:move"/>`).join('');
+      h += `<polyline data-chrome="1" points="${pts}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3" pointer-events="none"/>` +
+           r.pts.map((p, i) => `<rect data-chrome="1" data-t="roadpt" data-id="${idf(r.id)}" data-i="${i}" x="${num(p.x) - 5}" y="${num(p.y) - 5}" width="10" height="10" fill="#fff" stroke="${fg}" stroke-width="2" style="cursor:move"/>`).join('');
     }
     h += '</g>';
   });
@@ -74,8 +77,8 @@ export function renderCanvas() {
   if (ui.drawing) {
     const d = ui.drawing, all = d.hover && d.pts.length ? d.pts.concat([d.hover]) : d.pts;
     if (all.length) {
-      h += `<polyline points="${all.map(p => p.x + ',' + p.y).join(' ')}" fill="none" stroke="#5a6b73" stroke-width="14" stroke-opacity=".6" stroke-linecap="round" stroke-linejoin="round" ${d.pts.length > 1 ? 'stroke-dasharray="12 7"' : ''} pointer-events="none"/>`;
-      h += d.pts.map(p => `<circle cx="${p.x}" cy="${p.y}" r="5" fill="#fff" stroke="#5a6b73" stroke-width="3" pointer-events="none"/>`).join('');
+      h += `<polyline data-chrome="1" points="${all.map(p => p.x + ',' + p.y).join(' ')}" fill="none" stroke="#5a6b73" stroke-width="14" stroke-opacity=".6" stroke-linecap="round" stroke-linejoin="round" ${d.pts.length > 1 ? 'stroke-dasharray="12 7"' : ''} pointer-events="none"/>`;
+      h += d.pts.map(p => `<circle data-chrome="1" cx="${p.x}" cy="${p.y}" r="5" fill="#fff" stroke="#5a6b73" stroke-width="3" pointer-events="none"/>`).join('');
     }
   }
   const xf = (l, c) => {
@@ -118,7 +121,7 @@ export function renderCanvas() {
            `<circle r="${rh + 2}" fill="#fff" fill-opacity="0"/>` +
            `<line x1="${-half}" y1="${-rh}" x2="${-half}" y2="${rh}" stroke="#fff" stroke-width="2"/><line x1="${half}" y1="${-rh}" x2="${half}" y2="${rh}" stroke="#fff" stroke-width="2"/>` +
            `<path d="M-6 ${-rh - 8} L6 ${-rh - 20} M6 ${-rh - 8} L-6 ${-rh - 20} M-6 ${rh + 8} L6 ${rh + 20} M6 ${rh + 8} L-6 ${rh + 20}" stroke="#d62d20" stroke-width="3.5" stroke-linecap="round"/>` +
-           (sel ? `<circle r="${rh + 6}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` : '') + '</g>';
+           (sel ? `<circle data-chrome="1" r="${rh + 6}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` : '') + '</g>';
       if (c.name) h += `<text x="${p.x + 18}" y="${p.y - rh - 4}" font-size="12" fill="${fg}" ${halo}>${esc(c.name)}</text>`;
     });
   });
@@ -137,7 +140,7 @@ export function renderCanvas() {
     const dl = l ? ` data-l="${idf(l.id)}"` : '';
     h += `<g data-t="st"${dl} data-id="${idf(s.id)}">${body}` +
          (s.hub ? `<circle cx="${X}" cy="${Y}" r="${R + 4}" fill="none" stroke="${c}" stroke-width="3" stroke-dasharray="5 3"/>` : '') +
-         (sel ? `<circle cx="${X}" cy="${Y}" r="${ext + 5}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` : '') +
+         (sel ? `<circle data-chrome="1" cx="${X}" cy="${Y}" r="${ext + 5}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` : '') +
          (rot ? `<text class="stname" data-t="stname"${dl} data-id="${idf(s.id)}" x="${tx}" y="${ty}" text-anchor="middle" font-size="14" font-weight="700" fill="${fg}" ${halo} style="cursor:move" transform="rotate(${rot} ${tx} ${ty})">${esc(s.name)}</text>`
               : `<text class="stname" data-t="stname"${dl} data-id="${idf(s.id)}" x="${tx}" y="${ty}" text-anchor="middle" font-size="14" font-weight="700" fill="${fg}" ${halo} style="cursor:move">${esc(s.name)}</text>`) + '</g>';
   };
@@ -179,16 +182,16 @@ export function renderCanvas() {
     const tx = X + nx, ty = Y + ny + ext + 18;
     const nm = `<text class="stname" data-t="stopname" data-id="${idf(s.id)}" x="${tx}" y="${ty}" text-anchor="middle" font-size="13" font-weight="700" fill="${fg}" ${halo} style="cursor:move"${rot ? ` transform="rotate(${rot} ${tx} ${ty})"` : ''}>${esc(s.name)}</text>`;
     h += `<g data-t="stop" data-id="${idf(s.id)}">${body}` +
-         (sel ? `<circle cx="${X}" cy="${Y}" r="${ext + 5}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` : '') + nm + '</g>';
+         (sel ? `<circle data-chrome="1" cx="${X}" cy="${Y}" r="${ext + 5}" fill="none" stroke="${fg}" stroke-width="2" stroke-dasharray="4 3"/>` : '') + nm + '</g>';
   });
   drawImages('front');   // 前面はすべての上に重ねる
   // 矩形選択(□)のプレビューと、まとめて選択中の要素のハイライト
   const bl = getBulk();
   const bandBox = band ? rectOf(band.a, band.b) : (bl.length ? ui.bulkRect : null);
   if (bandBox) {
-    h += `<rect x="${num(bandBox.x0)}" y="${num(bandBox.y0)}" width="${Math.max(0, num(bandBox.x1) - num(bandBox.x0))}" height="${Math.max(0, num(bandBox.y1) - num(bandBox.y0))}" fill="${BAND_COLOR}" fill-opacity="${band ? .12 : .05}" stroke="${BAND_COLOR}" stroke-width="${band ? 2 : 1}" stroke-dasharray="6 4" pointer-events="none"/>`;
+    h += `<rect data-chrome="1" x="${num(bandBox.x0)}" y="${num(bandBox.y0)}" width="${Math.max(0, num(bandBox.x1) - num(bandBox.x0))}" height="${Math.max(0, num(bandBox.y1) - num(bandBox.y0))}" fill="${BAND_COLOR}" fill-opacity="${band ? .12 : .05}" stroke="${BAND_COLOR}" stroke-width="${band ? 2 : 1}" stroke-dasharray="6 4" pointer-events="none"/>`;
   }
-  const mkBox = (x, y, w, hh) => `<rect x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(hh)}" rx="4" fill="none" stroke="${BAND_COLOR}" stroke-width="2" stroke-dasharray="5 3" pointer-events="none"/>`;   // S1b
+  const mkBox = (x, y, w, hh) => `<rect data-chrome="1" x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(hh)}" rx="4" fill="none" stroke="${BAND_COLOR}" stroke-width="2" stroke-dasharray="5 3" pointer-events="none"/>`;   // S1b
   bl.forEach(it => {
     if (it.t === 'st') { const s = findStation(it.id); if (s) h += mkBox(s.x - 15, s.y - 15, 30, 30); }
     else if (it.t === 'stop') {
@@ -199,12 +202,12 @@ export function renderCanvas() {
     else if (it.t === 'img') { const im = (m.images || []).find(x => x.id === it.id); if (im) h += mkBox(im.x - 4, im.y - 4, im.w + 8, im.h + 8); }
     else if (it.t === 'road') {
       const r = (m.roads || []).find(x => x.id === it.id);
-      if (r && r.pts.length > 1) h += `<polyline points="${r.pts.map(p => num(p.x) + ',' + num(p.y)).join(' ')}" fill="none" stroke="${BAND_COLOR}" stroke-width="2" stroke-dasharray="5 3" pointer-events="none"/>`;   // S1b
+      if (r && r.pts.length > 1) h += `<polyline data-chrome="1" points="${r.pts.map(p => num(p.x) + ',' + num(p.y)).join(' ')}" fill="none" stroke="${BAND_COLOR}" stroke-width="2" stroke-dasharray="5 3" pointer-events="none"/>`;   // S1b
     }
     else if (it.t === 'cx') {
       const owner = m.lines.find(l => l.crossings.some(c => c.id === it.id));
       const c = owner && owner.crossings.find(x => x.id === it.id);
-      if (owner && c && owner.stations.length >= 2) h += `<g transform="${xf(owner, c).t}"><rect x="-20" y="-32" width="40" height="64" rx="4" fill="none" stroke="${BAND_COLOR}" stroke-width="2" stroke-dasharray="5 3" pointer-events="none"/></g>`;
+      if (owner && c && owner.stations.length >= 2) h += `<g transform="${xf(owner, c).t}"><rect data-chrome="1" x="-20" y="-32" width="40" height="64" rx="4" fill="none" stroke="${BAND_COLOR}" stroke-width="2" stroke-dasharray="5 3" pointer-events="none"/></g>`;
     }
   });
   document.getElementById('cv').innerHTML = h;

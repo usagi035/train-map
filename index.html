@@ -48,6 +48,18 @@
   #keyspop dl { display:grid; grid-template-columns:auto 1fr; gap:3px 14px; margin:0; }
   #keyspop dt { font-family:ui-monospace, Consolas, monospace; font-weight:700; white-space:nowrap; }
   #keyspop dd { margin:0; }
+  /* 画像の書き出し設定(U6)。「?」の一覧と同じ置き場所(ツールバー右寄せ) */
+  #exppop { position:absolute; right:8px; top:100%; z-index:96; min-width:250px;
+            max-width:min(440px, calc(100vw - 16px));
+            background:#fff; border:1px solid var(--rule); border-radius:8px;
+            box-shadow:0 6px 24px rgba(31,45,54,.16); padding:12px 14px;
+            display:flex; flex-direction:column; gap:10px; font-size:13px; }
+  #exppop[hidden] { display:none; }
+  #exppop fieldset { border:1px solid var(--rule); border-radius:6px; margin:0; padding:4px 10px 8px;
+                     display:flex; gap:12px; align-items:center; }
+  #exppop legend { font-weight:700; padding:0 5px; }
+  #exppop label { display:flex; align-items:center; gap:5px; cursor:pointer; }
+  #exppop .expbtns { display:flex; gap:8px; }
   button { font:inherit; }
   #tools button, aside button { background:#fff; color:var(--ink); border:1px solid #b9c4c1; border-radius:5px; padding:5px 11px; cursor:pointer; }
   #tools button.on { background:var(--signal); border-color:var(--signal); color:#fff; }
@@ -225,7 +237,21 @@
     <span class="sep" aria-hidden="true"></span>
     <button id="exp" title="路線図をJSONファイルで保存">書き出し</button>
     <button id="imp" title="JSONファイルを開く">読み込み</button>
-    <button id="expimg" title="PNG画像として保存">画像書き出し</button>
+    <button id="expimg" title="PNG / SVG 画像として保存(大きさと背景の透過を選べます)" aria-expanded="false" aria-controls="exppop">画像書き出し</button>
+    <!-- 画像の書き出し設定(U6): 倍率 1×/2×/3×・背景の透過・PNG / SVG。場所を押す・Esc で閉じる -->
+    <div id="exppop" hidden role="group" aria-label="画像の書き出し設定">
+      <fieldset class="expsizes">
+        <legend>大きさ</legend>
+        <label><input type="radio" name="expsize" value="1" checked>1×</label>
+        <label><input type="radio" name="expsize" value="2">2×</label>
+        <label><input type="radio" name="expsize" value="3">3×</label>
+      </fieldset>
+      <label class="exptrans"><input type="checkbox" id="exptrans">背景を透過にする</label>
+      <div class="expbtns">
+        <button id="exppng" title="選んだ大きさの PNG 画像として保存">PNGで書き出す</button>
+        <button id="expsvg" title="SVG(拡大してもぼけない形式)として保存">SVGで書き出す</button>
+      </div>
+    </div>
     <span class="sep" aria-hidden="true"></span>
     <button id="keyshelp" title="ショートカットの一覧" aria-expanded="false" aria-controls="keyspop">?</button>
     <div id="keyspop" hidden>
