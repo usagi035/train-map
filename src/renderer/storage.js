@@ -27,22 +27,26 @@ const write = (k, v) => { try { localStorage.setItem(k, v); return true; } catch
 
 /**
  * 旧キー → 新キーの移行(起動時に一度だけ呼ぶ)。
+ * 戻り値: すべて成功(または移行不要)なら true。**書こうとして失敗したなら false**
+ * (= 書けない環境なので、呼び出し側が「保存失敗」を知らせる。S5)。
  * 「新キーが無くて旧キーにだけある」場合に限る(移行済みの値は上書きしない)。
  * 路線図は S1 のサニタイザを通してから移す。直せない文書なら移さず、旧キーを
  * そのまま残して起動側が初期状態で始める(データは消さない)。
  * 小さなUI設定は値が JSON として読めればそのまま移し、駄目なら移さない(既定値で始まる)。
  */
 export function migrateLegacyKeys() {
+  let ok = true;
   if (readRaw(KEYS.maps) == null && readRaw(LEGACY.maps) != null) {
     try {
       const raw = readRaw(LEGACY.maps);
       const { doc } = sanitizeDocument(JSON.parse(raw));
-      write(KEYS.maps, JSON.stringify(doc));
-    } catch (e) { /* 旧キーはそのまま残す */ }
+      ok = write(KEYS.maps, JSON.stringify(doc)) && ok;
+    } catch (e) { /* 読めない文書は移さない(旧キーのまま)。「読めたのに書けない」失敗ではないので ok は変えない */ }
   }
   for (const k of ['open', 'acc', 'panelw']) {
     if (readRaw(KEYS[k]) != null || readRaw(LEGACY[k]) == null) continue;
-    try { JSON.parse(readRaw(LEGACY[k])); write(KEYS[k], readRaw(LEGACY[k])); }
-    catch (e) { /* 使えなければ移さない */ }
+    try { JSON.parse(readRaw(LEGACY[k])); ok = write(KEYS[k], readRaw(LEGACY[k])) && ok; }
+    catch (e) { /* 値が読めなければ移さない(各所が既定値で始める) = 失敗ではない */ }
   }
+  return ok;
 }

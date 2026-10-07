@@ -127,11 +127,13 @@ const uid = () => Math.random().toString(36).slice(2, 9);   // renderer.js L25
 ## 6. ファイル形式
 
 - **保存先は `localStorage('train-map:v1:maps')`**、値は `JSON.stringify(S)`。エクスポートは同じ構造の `railmaps.json`(`#exp` L1225)。
+  **保存に失敗したら黙らない**: `setSaveFailed(true)` で赤い常駐バナー(「書き出し」付き)+ `beforeunload` を張り、
+  次の保存が成功するまで解除しない(S5)。
 - 構造: `{ maps: [ { id, name, bg, w, h, lines[], roads[], stops[], hubs[], boxes[], images[], show{} } ] }`
 - **`formatVersion` のようなバージョンフィールドは無い。**
 - ただし **マイグレーションの仕組みは既に存在する**: `migrate()` L45-88 が旧形式を変換する
   (①欠落配列の補完 ②`show` の正規化 ③`Station.links` の「配列 → 路線ごとのオブジェクト」 ④`type:'road'` の路線を `roads`+`stops` へ)
-- 読み込み時の検証は L1238(`maps` と `lines` が配列か)。**壊れたファイルは alert して何もしない。**
+- 読み込み時の検証は `sanitizeDocument()`(S1)= **拒否ではなく修復**(不正な値は既定へ。入口は「読み込み」「起動時」「storage」の3つ)。
 
 ## 7. Undo / Redo
 

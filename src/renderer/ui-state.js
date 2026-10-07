@@ -6,6 +6,7 @@ import { S, G, mw, mh, clamp, mkMap, findStationIn, linesOfIn } from '../core/mo
 import { dist, segPt } from '../core/geometry.js';
 import { createCore } from '../core/operations.js';
 import { KEYS, migrateLegacyKeys } from './storage.js';
+import { setBanner, clearBanner } from './banner.js';
 
 // 状態の読み書き・編集操作はすべて core 経由(画面が直接書き換えない。指示書 §6/§7)
 export const core = createCore();
@@ -33,7 +34,8 @@ export const HINTS = {
 
 /* ---------- 状態の読み込み(localStorage の読み書きは画面側の責務) ---------- */
 // 旧キー(railmaps 等)から名前空間つきキーへ移してから読む。旧キーは残す(S3)。
-migrateLegacyKeys();
+// ここで失敗(= 書けない環境)した場合は、下の「保存失敗」の知らせへ回す(S5)。
+const migrateOk = migrateLegacyKeys();
 // 読み込んだ保存データは必ずサニタイズを通す(core.importDocument の中)。
 // 直せないときだけ初期状態で始める。ここで書き戻すことは無いので、
 // 保存文字列はユーザーが実際に編集するまで残ったまま(壊したデータは消さない)。
@@ -67,7 +69,6 @@ export const linesOf = id => linesOfIn(curMap(), id);
 /* ---------- 履歴 (元に戻す / やり直す) ---------- */
 export const viewNow = () => ({ map: ui.map, line: ui.line });
 let saveTimer = 0;
-let quotaWarned = false;   // 保存失敗の注意は1セッションに1回だけ表示
 export function updateUndoButtons() {
   const u = document.getElementById('undo'), r = document.getElementById('redo');
   if (u) u.disabled = !core.canUndo();
@@ -78,13 +79,10 @@ export const save = () => {
   clearTimeout(saveTimer); saveTimer = 0;
   const now = core.commit(viewNow());   // 変化が無ければ null(そのときは保存もしない)
   if (!now) return;
-  try { localStorage.setItem(KEYS.maps, now); localAuthority = false; } catch (e) {
-    // 保存できないと黙っていると消えてしまうので注意を出す(画像を取り込むと容量上限に当たりやすい)
+  try { localStorage.setItem(KEYS.maps, now); localAuthority = false; setSaveFailed(false); } catch (e) {
+    // 保存できないと黙っていると消えるので、直るか書き出をするまで消さない知らせを出す(S5)
     console.warn('自動保存に失敗しました:', e);
-    if (!quotaWarned) {
-      quotaWarned = true;
-      alert('自動保存に失敗しました。\n保存領域の上限に達した可能性があります。\n画像が大きい場合は削除するか、「書き出し」でJSONをバックアップしてください。');
-    }
+    setSaveFailed(true);
   }
   updateUndoButtons();
 };
@@ -105,6 +103,32 @@ export const pendingSave = () => saveTimer !== 0;
 // 相手の版で上書きしてよいかの判定。busy は「ドラッグ中・道路描画中・入力中」のこと。
 // どれか一つでも当てはまれば、バナーでどちらを使うか選ばせる。
 export const shouldAskRemote = (busy = false) => !!(busy || pendingSave() || localAuthority);
+
+/* ---------- 保存が失敗したときの知らせ(S5) ----------
+   保存できないまま編集を続けていると消えるので、「直す or 書き出す」まで消さない。
+   - 常駐のバナー(赤)+「書き出し」ボタンで、その場からJSONを出せるようにする。
+   - `beforeunload` は失敗している間だけ張る(保存が成功しているときに閉じる確認を出すのは邪魔)。
+   - 次の保存が成功したらフラグとバナーと beforeunload すべてを下ろす。 */
+let saveFailed = false;
+const unloadWhileFailing = e => { e.preventDefault(); e.returnValue = ''; return ''; };
+export function setSaveFailed(on) {
+  const want = !!on;
+  if (saveFailed === want) return;
+  saveFailed = want;
+  if (want) {
+    setBanner('savefail',
+      '自動保存に失敗しています。データが消える前に「書き出し」でJSONを保存してください。',
+      [{ label: '書き出し', onClick: () => { const b = document.getElementById('exp'); if (b) b.click(); }, close: false }],
+      'warn');
+    window.addEventListener('beforeunload', unloadWhileFailing);
+  } else {
+    clearBanner('savefail');
+    window.removeEventListener('beforeunload', unloadWhileFailing);
+  }
+}
+export const isSaveFailed = () => saveFailed;
+// 起動時の旧キー移行で書けなかった場合は、ここで最初の1回を知らせる(書けない環境は以降も同じ)
+if (!migrateOk) setSaveFailed(true);
 // 読み込んだ文書ごとに画面の状態をまとめて入れ替える(JSONの読み込み・別ウィンドウとの同期で使う)
 export function replaceUi(next) { ui = next; }
 core.resetHistory(viewNow());

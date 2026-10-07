@@ -18,6 +18,8 @@ let acc = {};
 try { acc = JSON.parse(localStorage.getItem(KEYS.acc)) || {}; } catch (e) { acc = {}; }
 if (acc.map == null) acc.map = false;   // 路線図の設定(名前・背景・削除)は既定で閉じる
 const accOpen = id => acc[id] !== false;
+// 開閉状態は表示だけの設定(文書本体ではない)。書けなくても内容は失われないので握りつぶす。
+// 文書本体の保存失敗は ui-state の save() が必ず知らせる(S5)。
 const saveAcc = () => { try { localStorage.setItem(KEYS.acc, JSON.stringify(acc)); } catch (e) {} };
 let selKey = '';   // 選択が変わったときは「選択中」を開いたままにする
 function sec(id, title, body, badge) {

@@ -282,11 +282,11 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `snapStr()` | `JSON.stringify(S)`(失敗時は空文字) |
 | `viewNow()` / `syncView()` | 表示中の路線図・路線を記録(undo で開き直すため) |
 | `updateUndoButtons()` | ツールバーの ↶/↷ を有効/無効化 |
-| **`save()`** | ①変化が無ければ何もしない ②**変更前のスナップを `undoStack` に積む**(上限50、`redoStack` はクリア) ③`localStorage('train-map:v1:maps')` へ書く。**失敗時は警告＋1セッション1回だけ alert**(容量超過対策) ④Undoボタン更新 |
+| **`save()`** | ①変化が無ければ何もしない ②**変更前のスナップを `undoStack` に積む**(上限50、`redoStack` はクリア) ③`localStorage('train-map:v1:maps')` へ書く。**失敗時は黙らず `setSaveFailed(true)`**(常駐の赤バナー + `beforeunload`。成功で解除 = S5) ④Undoボタン更新 |
 | `deferSave()` | 600ms 後に `save()`。文字入力・スライダーの連続操作を**1履歴にまとめる** |
-| `applySnap(e)` | スナップ文字列 `S` に差し替え、localStorage へ書く、開いているタブ/路線を有効な範囲に補正、選択と□選択を解除して `renderAll()` |
+| `applySnap(e)` | スナップ文字列 `S` に差し替え、localStorage へ書く(**書けなければ `save()` と同じ失敗の知らせ**=S5)、開いているタブ/路線を有効な範囲に補正、選択と□選択を解除して `renderAll()` |
 | `undo()` / `redo()` | **道路の描画中は履歴ではなく「頂点を1つ戻す」**(0個なら中止)。それ以外はスナップを差し替える |
-| `quotaWarned` | 容量警告を1回だけ出すためのフラグ |
+| `setSaveFailed(on)` / `isSaveFailed()` | **保存失敗の状態と知らせ**(S5)。`true` = 赤い常駐バナー(「書き出し」付き)+ `beforeunload` を張る。次の保存が成功したら全部下ろす。起動時の旧キー移行で書けなかった場合も同じ経路 |
 
 ### 5.5 幾何(L216〜251)
 

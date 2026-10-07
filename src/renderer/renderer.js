@@ -9,7 +9,7 @@ import { core, ui, replaceUi, esc, curMap, curLine, findStation, linesOf, viewNo
          save, getBulk, clearBulk, rectOf, pickInBox, isStationLocked, hitLocked, lineEditBlocked,
          snapOn, autoselOn, snapPt, renderAll, renderTools, del, cancelRoad, finishRoad, startRoadDrawing,
          addRoadPoint, updateRoadHint, imgPick,
-         keepLocalVersion, clearLocalAuthority, shouldAskRemote } from './ui-state.js';
+         keepLocalVersion, clearLocalAuthority, shouldAskRemote, setSaveFailed } from './ui-state.js';
 import { cv, stage, pt, setZoom, renderCanvas, setBandSource } from './canvas.js';
 import { renderSide } from './side-panel.js';
 import { renderLeft } from './left-panel.js';
@@ -20,7 +20,11 @@ import { setBanner, clearBanner, hasBanner } from './banner.js';
 // 履歴のスナップを画面へ適用する(表示中の路線図・路線を、そのときのものへ合わせ直す)
 function applySnap(e) {
   // 状態そのものは core.undo() / core.redo() が入れ替え済み
-  try { localStorage.setItem(KEYS.maps, e.s); } catch (err) {}
+  // ここは文書本体の保存なので、失敗は黙らず「保存失敗」の知らせへ回す(S5)
+  try { localStorage.setItem(KEYS.maps, e.s); setSaveFailed(false); } catch (err) {
+    console.warn('元に戻す/やり直し後の保存に失敗しました:', err);
+    setSaveFailed(true);
+  }
   const v = e.v || {};
   ui.open = ui.open.filter(id => S.maps.some(m => m.id === id));
   const mid = S.maps.some(m => m.id === v.map) ? v.map : S.maps[0].id;
@@ -553,7 +557,11 @@ function setPanelW(side, w) {
   pw[side] = Math.max(PWRANGE[side][0], Math.min(hi, Math.round(w)));
   applyPanelW();
 }
-function savePanelW() { try { localStorage.setItem(PWKEY, JSON.stringify(pw)); } catch (e) {} }
+function savePanelW() {
+  // 幅は見た目だけの設定(文書本体ではない)。書けなくても内容は失われないので握りつぶす。
+  // 文書本体の保存失敗は ui-state の save() が必ず知らせる(S5)。
+  try { localStorage.setItem(PWKEY, JSON.stringify(pw)); } catch (e) {}
+}
 applyPanelW();
 // ウィンドウの大きさが変わったら、記憶した幅を今の画面幅に合わせて当て直す(記憶した値自体は変えない)
 window.addEventListener('resize', applyPanelW);

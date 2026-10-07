@@ -18,6 +18,8 @@ export function renderHome() {
     '</ul><button id="hnew">新しい路線図</button>';
 }
 
+// 開いているタブの並びは表示だけの設定(文書本体ではない)。書けなくても内容は失われないので
+// 握りつぶす。文書本体の保存失敗は ui-state の save() が必ず知らせる(S5)。
 export function persistOpen() { if (!location.hash) try { localStorage.setItem(KEYS.open, JSON.stringify(ui.open)); } catch (e) {} }
 
 function openMap(id) {

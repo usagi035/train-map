@@ -161,7 +161,7 @@ test('S4-6 storage ハンドラは「競合中は選ばせる / 平常時だけ�
   const u = readFileSync(new URL('../src/renderer/ui-state.js', import.meta.url), 'utf8');
   assert.match(u, /export const shouldAskRemote/);
   assert.match(u, /export const keepLocalVersion/);
-  assert.match(u, /localAuthority = false; \} catch/, '保存成功で権限を戻していない');
+  assert.match(u, /localAuthority = false; setSaveFailed\(false\); \} catch/, '保存成功で権限を戻していない');
   // バナーの見た目が index.html に在る
   const h = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   assert.match(h, /#banners \{/, 'バナーのスタイルが無い');
