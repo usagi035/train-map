@@ -34,6 +34,7 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
 | `train-map:v1:open` | 開いているタブの路線図ID配列 | `persistOpen()` |
 | `train-map:v1:acc` | 右パネル各グループの開閉状態(クイック操作パネル `#quick` は開閉を持たないため対象外) | `saveAcc()` |
 | `train-map:v1:panelw` | 左右サイドバーの幅 `{left, right}`(px)。ドラッグ・キーボード・ダブルクリックで変更 | `savePanelW()`(`renderer.js`) |
+| `train-map:v1:updated` | **路線図ごとの最終更新時刻** `{ [mapId]: ms }`(U5)。**文書本体には足さない** = 書き出しの JSON 形式を変えないため別のキーへ持つ。旧キーの移行対象は無い | `touchMap()` / `forgetMap()` / `stampMissing()`(`ui-state.js`) |
 
 > **旧キーからの移行(S3)**: 移行前の `railmaps` / `railopen` / `railacc` / `railpanelw` は起動時に
 > `migrateLegacyKeys()` が「新キーが無くて旧キーにだけある」場合に限り読み取って新キーへ移す。
@@ -67,7 +68,7 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
 | `src/renderer/canvas.js` | SVG の描画(`renderCanvas`)とズーム・スクロール(`pt` / `applyZoom` / `setZoom` / `centerStation`) |
 | `src/renderer/side-panel.js` | 右パネルの描画(`renderSide` / `sec`)と、左のクイック操作パネル(`renderQuick`)。イベントは `#side` と `#quick` の両方へ登録 |
 | `src/renderer/left-panel.js` | 左パネルの描画(`renderLeft` / `stationGlyph`)と駅の並べ替え |
-| `src/renderer/tabs.js` | タブと一覧(ホーム)の描画・操作(`renderTabs` / `renderHome` / `openMap` / `closeTab` / `newMap` / `deleteMap`) |
+| `src/renderer/tabs.js` | タブと一覧(ホーム)の描画・操作(`renderTabs` / `renderHome` / `openMap` / `closeTab` / `newMap` / `deleteMap` / `duplicateMap` / `startRename` = U5) |
 | `src/renderer/renderer.js` | 画面側の入口(約540行)。初期化、マウス・キー・ファイル入力、`storage` 同期、**サイドバーの幅管理(`wireSplit`)**、各モジュールの描画関数の登録 |
 | `index.html` | 画面の HTML / CSS(ルート直下) |
 | `package.json` | npm スクリプト(`start` / `serve` = 開発用サーバー、`test` = `node --test`)。依存パッケージ・ビルド設定は無い |
@@ -158,9 +159,11 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
   <div class="split" id="splleft">  … 左サイドバーの幅ハンドル(7px)
   <div id="stage"><svg id="cv"> … 描画キャンバス(SVG)。`role="application"` + `tabindex="0"` + `aria-label`
                                  = キーボード(U4)の入口。クリックでフォーカスを得る    ← renderCanvas()
+    <div id="empty" hidden>     … 空の路線図の案内と「サンプルの路線図を読み込む」(U5)。
+                                 本文は `pointer-events:none` で下のキャンバスへクリックが届く    ← #loadsample click
   <div class="split" id="splright"> … 右サイドバーの幅ハンドル(7px)
   <aside id="side">          … 右パネル: 設定(6グループ)                  ← renderSide()
-  <div id="home">            … 路線図の一覧画面                          ← renderHome()
+  <div id="home">            … 路線図の一覧画面(件数+最終更新・開く/複製/名前を変更/削除)  ← renderHome()
 <div id="hint">              … ツールごとの操作ヒント(固定表示)
 <script type="module" src="./src/renderer/renderer.js">
 ```
@@ -173,7 +176,7 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 | --- | --- | --- | --- |
 | `#leftcol` 左サイドバー | `var(--lw)` 既定400px(260〜640px、ドラッグで変更) | **上 `#left`**: 選択中の路線の駅リスト(経路順・↑↓・ドラッグ並べ替え) / **下 `#quick`**: 開閉なしの常設パネル(下端から高さ固定) | `renderLeft()` / `renderQuick()` |
 | `.split`(`#splleft` `#splright`) | 各7px | 幅変更ハンドル(`role="separator"` `tabindex="0"`、ドラッグ・ダブルクリック・キーボード) | — |
-| `#stage` | 残り(最低200px `STAGE_MIN`) | SVG キャンバス | `renderCanvas()` |
+| `#stage` | 残り(最低200px `STAGE_MIN`) | SVG キャンバス + 空のときだけ出る案内 `#empty`(U5) | `renderCanvas()` |
 | `#side` 右パネル | `var(--rw)` 既定270px(220〜560px、ドラッグで変更) | 開閉できる6グループ(選択中 / 路線(レイヤー) / 選択中の路線 / 幹線道路 / 画像 / 路線図の設定) | `renderSide()` |
 
 `#quick` の中身(`renderQuick()` が描く)は、**路線**(`#snap` グリッドに合わせる・`#autosel` 追加後に選択へ戻る・路線を追加・`#lloop` 環状線) / **ターミナル(乗り換え駅)**(`#shub` と属する路線チェック) / **その他の表示**(`.showel` 4スイッチ)の3グループ。
@@ -187,7 +190,8 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 | --- | --- | --- |
 | タブ | `.tab` / `.on` / `.x` | 見出しタブと閉じるボタン |
 | ツールバー | `#tools button` / `.on` | 押下中は緑 |
-| 一覧画面 | `#home li` / `.st` | 路線図リスト |
+| 一覧画面 | `#home li` / `.st` / `.meta` / `input.hname` | 路線図リスト(1行に名前・状態・4ボタン、**1行目に件数と最終更新 `.meta`**、名前変更は行の中だけ入力欄へ差し替える = U5) |
+| 空状態の案内 | `#empty` / `#empty[hidden]` / `#empty button` | キャンバス中央に出す案内(U5)。本文は `pointer-events:none`・`user-select:none`、色は注記と同じ `#52636c`(`--paper` 上 5.7:1 = AA)。`display:flex` が `[hidden]` より強いので `#empty[hidden]{display:none}` で消す |
 | パネル共通 | `aside label` / `.row` / `.note` | ラベル・横並び行・補足文 |
 | 左右リスト | `#lines` `#roadlist` `#imglist` `.linklist` | 行・選択 `.on`・ハンドル `.lhandle` |
 | レイヤー操作 | `#lines .lyr` / `.lyr:disabled` / `#lines li.off` | 👁🔒↑↓ ボタン、非表示行の薄表示 |
@@ -273,7 +277,8 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `curLine()` | 選択中の路線(無いなら先頭) |
 | `findStation(id)` | `m.hubs` と全路線の `stations` から駅を探す(乗り換え駅は両方に入り得る) |
 | `linesOf(id)` | その駅が属する路線(0〜複数。路線外の乗り換え駅は0本) |
-| `allStations(m)` | 全駅を**IDで重複排除**して返す(複数路線に共有される同一駅は1つ) |
+| `allStations(m)` | 全駅を**IDで重複排除**して返す(複数路線に共有される同一駅は1つ)。一覧の件数(U5)でも使う |
+| `blankMap(m)` | **何も置かれていない路線図**(U5)。駅・踏切・道路・バス停・乗り換え駅・ラベル枠・画像が1つも無ければ true。**名前では判定しない**(名前を変えただけで案内が出なくなるため)。`mkMap()` は `boxes`/`images` を作らないので無い配列も空扱い |
 | `OFF_LINK` | `'-'`…路線に属さないときの接続リストのキー |
 | `linksIn(s, lid)` | 駅 `s` の路線 `lid` 用「接続する駅」配列(無ければ空) |
 | `linkGroups(m, s)` | 右パネルに並べる接続グループ(属する路線ごと + 必要なら「路線外」) |
@@ -287,8 +292,9 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `snapStr()` | `JSON.stringify(S)`(失敗時は空文字) |
 | `viewNow()` / `syncView()` | 表示中の路線図・路線を記録(undo で開き直すため) |
 | `updateUndoButtons()` | ツールバーの ↶/↷ を有効/無効化 |
-| **`save()`** | ①変化が無ければ何もしない ②**変更前のスナップを `undoStack` に積む**(上限50、`redoStack` はクリア) ③`localStorage('train-map:v1:maps')` へ書く。**失敗時は黙らず `setSaveFailed(true)`**(常駐の赤バナー + `beforeunload`。成功で解除 = S5) ④Undoボタン更新 |
+| **`save(changedId?)`** | ①変化が無ければ何もしない ②**変更前のスナップを `undoStack` に積む**(上限50、`redoStack` はクリア) ③`localStorage('train-map:v1:maps')` へ書く。**失敗時は黙らず `setSaveFailed(true)`**(常駐の赤バナー + `beforeunload`。成功で解除 = S5) ④書けた変更だけ `touchMap()` で**最終更新を記録**(U5。`changedId` は「どの路線図が変わったか」= 追加・複製・名前変更・取り込みなどで `ui.map` 以外が変わったときに指定) ⑤Undoボタン更新 |
 | `deferSave()` | 600ms 後に `save()`。文字入力・スライダーの連続操作を**1履歴にまとめる** |
+| `touchMap(id)` / `mapUpdated(id)` / `forgetMap(id)` / `stampMissing()` | **路線図ごとの最終更新(U5)**。値は `KEYS.updated`(`train-map:v1:updated`)= **文書本体には足さない**。読み込みは初回 access のとき(lazy、node テストでは localStorage が無くても動く)。`stampMissing()` は起動時に日時の無い路線図へ「記録開始」の時刻を付ける(無くすると一覧の日時が空欄)。表示用のため書き込み失敗は握りつぶす |
 | `applySnap(e)` | スナップ文字列 `S` に差し替え、localStorage へ書く(**書けなければ `save()` と同じ失敗の知らせ**=S5)、開いているタブ/路線を有効な範囲に補正、選択と□選択を解除して `renderAll()` |
 | `undo()` / `redo()` | **道路の描画中は履歴ではなく「頂点を1つ戻す」**(0個なら中止)。それ以外はスナップを差し替える |
 | `setSaveFailed(on)` / `isSaveFailed()` | **保存失敗の状態と知らせ**(S5)。`true` = 赤い常駐バナー(「書き出し」付き)+ `beforeunload` を張る。次の保存が成功したら全部下ろす。起動時の旧キー移行で書けなかった場合も同じ経路 |
@@ -331,9 +337,9 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | 関数 | 動作 |
 | --- | --- |
 | `renderTabs()` | タブ行を生成(選択中 `.on`、✕、`＋`、`一覧`) |
-| `renderHome()` | 路線図一覧(開く/削除/新しい路線図) |
+| `renderHome()` | 路線図一覧(U5)。1行に 名前 `.hname` / 状態 `.st` / 「開く」「複製」「名前を変更」「削除」 / **1行目に件数と最終更新 `.meta`**(`describeMap()` = 路線・駅・バス停・幹線道路・ラベル枠・画像の0件以外 + `最終更新 YYYY/MM/DD hh:mm`) |
 | `renderTools()` | ツールボタンの `.on` 切替 + **`aria-pressed`(「いま押しているモード」= U3)**、ヒント文、カーソル、Undo/Redo 有効化、**`announceStatus()`(ツールと選択を読み上げ領域へ = U4)** |
-| **`renderCanvas()`** | SVG を文字列生成で**全書き換え**。順序: 背景+グリッド → 画像(背面/back) → ラベル枠 → 幹線道路 → 描画中プレビュー → 踏切の道路バー → **線路+駅間隔の数字** → 踏切記号 → **接続線(1本化)** → **駅** → バス停 → 画像(前面/front) → □選択の枠とハイライト。非表示路線・非表示種類は描かない。選択中は破線の枠とリサイズ用 ■ を足す |
+| **`renderCanvas()`** | まず `blankMap(m)` で**空のときだけ `#empty`(案内)を出し入れ**(U5。空のあいだは `#stage` のスクロールを 0 に戻す = 案内が中央に来る)。続けて SVG を文字列生成で**全書き換え**。順序: 背景+グリッド → 画像(背面/back) → ラベル枠 → 幹線道路 → 描画中プレビュー → 踏切の道路バー → **線路+駅間隔の数字** → 踏切記号 → **接続線(1本化)** → **駅** → バス停 → 画像(前面/front) → □選択の枠とハイライト。非表示路線・非表示種類は描かない。選択中は破線の枠とリサイズ用 ■ を足す |
 | └ 内部 `drawImages(zone)` | 画像要素の描画。**back かつ非選択のみ `pointer-events:none`**(下の要素を選べるように) |
 | └ 内部 `drawStation(s, l)` | 駅の形(丸/二重丸/四角/ひし形)・ハブの点線・選択枠・駅名(`nameX/nameY/nameRot` 回転) |
 | └ 内部 `conn(s)` | 駅の `links` から接続線を描く。`drawnConn` で `from>to` の重複を除き**常に1本だけ**。色と太さは接続先の駅の路線(路線外はグレー) |
@@ -402,6 +408,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `#keyshelp` click / Esc / 場所の click | 「?」で**ショートカット一覧(#keyspop)を開閉**(U3)。`aria-expanded` を追従させ、Esc と一覧の外を押すと閉じる(他の Esc の挙動はそのまま) |
 | `#file change` | **10MB を超えたら読む前に中止**(S6)→ JSON を parse → `sanitizeDocument()` → `migrate()` → `ui` を初期化 → `save()`。直せない文書なら alert |
 | `#imgfile change` | `importImageFile(file, imgReplaceId)` を呼んで即クリア |
+| `#loadsample click` | 空状態の案内から**同梱のサンプルを読み込む**(U5)。`core.loadSample(いま開いているID)` = 中身だけ差し替え(開いているタブのIDと選択路線は保つ)→ `ui.line` を先頭の路線へ選び直し → `save(m.id)`(最終更新) → `renderAll()` + トースト。データは `src/core/sample.js`、**`sanitizeDocument()` で警告なしで通ることを S1 のテストで確かめる** |
 
 #### 右パネル `#side` / クイック操作パネル `#quick`
 
@@ -446,7 +453,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | 箇所 | 動作 |
 | --- | --- |
 | `#tabs click` | タブ切替 / ✕ で `closeTab` / `#addmap` で `newMap` / `#listbtn` で一覧へ |
-| `#home click` | `openMap` / `deleteMap`(確認ダイアログ) / `newMap` |
+| `#home click` | `openMap` / `deleteMap`(**確認ダイアログなし** = トーストの「取り消し」で戻す = U2)/ `duplicateMap` / `startRename` / `newMap` |
 
 ### 5.12 画像のインポートと書き出し(L1246〜1327)
 
@@ -463,8 +470,11 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | --- | --- |
 | `openMap(id)` | タブに追加して表示(選択路線は先頭の路線へ) |
 | `closeTab(id)` | タブを閉じる。閉じたのが表示中なら隣へ移動、無ければ一覧へ |
-| `newMap()` | 「路線図 N+1」を作成して開く |
-| `deleteMap(id)` | 路線図を削除(**先に `save()` してから表示を切り替える** = 履歴で復元可能)。全部消えたら空の路線図を1枚用意 |
+| `newMap()` | 「路線図 N+1」を作成して開く(`save(m.id)` = 作った路線図の最終更新として記録) |
+| `deleteMap(id)` | 路線図を削除(**先に `save(id)` してから表示を切り替える** = 履歴で復元可能)。全部消えたら空の路線図を1枚用意(`touchMap(dropId)`)。`forgetMap(id)` で削除した路線図の最終更新も消す |
+| `duplicateMap(id)` | 一覧の「複製」(U5)。`core.duplicateMap()` で中身を丸ごとコピーした**すぐ後ろ**に追加 → `save(複製したID)` → `renderAll()` + トースト。開いているタブは変えない |
+| `startRename(id)` | 一覧の「名前を変更」(U5)。**ダイアログは出さず**、その行の名前だけ `<input>` に差し替える。Enter / フォーカスが外れたら確定、Esc で中止。空の名前は受け付けない。**一覧ごとは描き直さず** `.hname` と `.meta` と(開いていれば)`renderTabs()` だけ更新 = 押しているボタンの次のクリックが消えない |
+| `restoreDeleted()` | U2 の「取り消し」。`save(復元したID)` で最終更新も戻す |
 | `window.__closeTab()` | **`renderer.js` の Alt+W から呼ばれる**。true=タブを閉じた / false=もう無いのでウィンドウを閉めてよい(別タブで開いた場合はブラウザが閉じる。通常のタブでは `window.close()` は無視される) |
 
 ### 5.14 ほかのウィンドウとの同期(L1687〜1706)

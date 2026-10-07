@@ -2,7 +2,7 @@
    地図の描画とビューポート(ズーム・スクロール)。描画だけを担当する。
    (元は src/ui/renderer.js の1ファイル。指示書 §8〜§12 に沿って画面側を分割した)
    =========================================================================== */
-import { S, G, mw, mh, clamp, lw, isDark, BG, findStationIn, linesOfIn, allStations, STOP_COLOR, OFF_LINK } from '../core/model.js';
+import { S, G, mw, mh, clamp, lw, isDark, BG, findStationIn, linesOfIn, allStations, blankMap, STOP_COLOR, OFF_LINK } from '../core/model.js';
 import { dist, isLoop, segCount, segA, segB, segPt } from '../core/geometry.js';
 import { esc, col, num, idf, ui, curMap, curLine, findStation, linesOf, showEl, getBulk, rectOf, BAND_COLOR } from './ui-state.js';
 
@@ -16,6 +16,18 @@ export function renderCanvas() {
   const fg = dark ? '#f2f5f4' : '#1f2d36', sub = dark ? '#9fb0b8' : '#6b7c84';
   const halo = `style="paint-order:stroke;stroke:${bg};stroke-width:4px"`;
   document.getElementById('stage').style.background = bg;
+  // 空の路線図には「まず何をすればいいか」の案内とサンプルの読み込みボタンを出す(U5)。
+  // 案内は本文に pointer-events を効かせず、下のキャンバスへのクリックは通したままにする。
+  const em = document.getElementById('empty');
+  if (em) {
+    const blank = blankMap(m);
+    if (blank) {
+      em.hidden = false;
+      // 案内が画面の中央に来るよう、空のあいだはスクロールを原点へ戻す
+      const st = document.getElementById('stage');
+      if (st.scrollLeft || st.scrollTop) { st.scrollLeft = 0; st.scrollTop = 0; }
+    } else em.hidden = true;
+  }
   applyZoom();
   const cw = num(mw(m)), ch = num(mh(m));   // S1b: 数値であることを確認してから入れる
   let h = `<defs><pattern id="g" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="${fg}" stroke-opacity=".1" stroke-width="1"/></pattern></defs>` +

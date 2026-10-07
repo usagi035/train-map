@@ -8,6 +8,7 @@ import { S, getSnapshot, replaceState, snapStr, newId, mkLine, mkMap, mkStation,
 import { project, keepCrossings, segPt, segA, segB, dist } from './geometry.js';
 import { migrate } from './migration.js';
 import { sanitizeDocument } from './sanitize.js';
+import { SAMPLE_MAP } from './sample.js';
 import * as history from './history.js';
 
 // 踏切の位置をグリッド上の点に合わせる(snap=false のときは位置をそのまま使う)
@@ -176,6 +177,34 @@ export function createCore() {
     },
     // 路線図を追加
     addMap(name) { const m = mkMap(name); S.maps.push(m); return m; },
+    // 路線図の複製(U5: 一覧の「複製」)。中身はまるごとコピーし、ID と名前だけ作る。
+    // 要素の ID は路線図ごとに閉じている(探す関数は必ずその地図を見る)ので、そのままでよい
+    duplicateMap(id) {
+      const i = S.maps.findIndex(m => m.id === id);
+      if (i < 0) return null;
+      const copy = JSON.parse(JSON.stringify(S.maps[i]));
+      copy.id = newId();
+      copy.name = (copy.name || '路線図') + ' のコピー';
+      S.maps.splice(i + 1, 0, copy);
+      return copy;
+    },
+    // 路線図の名前を変える(U5)。空の名前は受け付けない(= 変わらない)
+    renameMap(id, name) {
+      const m = S.maps.find(x => x.id === id);
+      if (!m || !name) return null;
+      m.name = name;
+      return m;
+    },
+    // 空の路線図に同梱のサンプルを入れる(U5: 初回の案内から)。
+    // 路線図の ID はそのままにして中身だけ差し替える(開いているタブと対応がずれないため)
+    loadSample(mapId) {
+      const i = S.maps.findIndex(m => m.id === mapId);
+      if (i < 0) return null;
+      const m = JSON.parse(JSON.stringify(SAMPLE_MAP));
+      m.id = mapId;
+      S.maps[i] = m;
+      return m;
+    },
 
     /* ---------- 削除 ---------- */
     // 1つの要素を削除(□で選んだ複数の削除でも使う)。削除できたら true

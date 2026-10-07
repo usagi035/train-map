@@ -25,9 +25,13 @@
   #addmap { font-size:18px; }
   #home { flex:1; overflow:auto; padding:24px 32px; background:var(--paper); display:none; }
   #home h2 { margin:0 0 12px; font-size:18px; }
-  #home ul { list-style:none; margin:0 0 16px; padding:0; max-width:520px; }
-  #home li { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--rule); }
+  /* 件数と最終更新を出すようになったので、少し広く・折り返せるようにする(U5) */
+  #home ul { list-style:none; margin:0 0 16px; padding:0; max-width:660px; }
+  #home li { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--rule); flex-wrap:wrap; }
   #home li > span:first-child { flex:1; font-weight:700; }
+  #home .meta { flex:1 1 100%; color:#52636c; font-size:12px; }   /* 注記と同じ色(--paper 上 5.7:1、白地なら 6.25:1 = AA) */
+  #home input.hname { flex:1; min-width:140px; font:inherit; font-weight:700; padding:4px 6px;
+                      border:1px solid #8d9c99; border-radius:5px; }
   #home .st { color:var(--signal); font-size:12px; }
   #home button { background:#fff; color:var(--ink); border:1px solid #b9c4c1; border-radius:5px; padding:5px 11px; cursor:pointer; font:inherit; }
   #tools { display:flex; gap:6px; align-items:center; background:var(--paper); color:var(--ink); position:relative;
@@ -54,8 +58,20 @@
   #tools button:hover:not(.on), aside button:hover { background:#eaf0ee; }
   button:focus-visible, input:focus-visible { outline:2px solid var(--signal); outline-offset:1px; }
   main { flex:1; display:flex; min-height:0; }
-  #stage { flex:1; overflow:auto; background:var(--paper); }
+  #stage { flex:1; overflow:auto; background:var(--paper); position:relative; }   /* position= 空状態の案内(U5)の土台 */
   #cv { display:block; user-select:none; touch-action:none; }   /* タッチ操作は自前で処理する(ズーム/パン = U1) */
+  /* ---------- 空の路線図の案内(U5) ----------
+     本文は pointer-events:none = 下のキャンバスへクリックが届く。ボタンだけが押せる。
+     文字色 #52636c は --paper(#f4f6f5)上で 約5.7:1 = AA を満たす。 */
+  #empty { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+           justify-content:center; gap:14px; padding:24px; text-align:center;
+           pointer-events:none; user-select:none; color:#52636c; font-size:15px; }
+  #empty[hidden] { display:none; }   /* display:flex の方が [hidden] より強いので明示する */
+  #empty p { margin:0; line-height:1.8; }
+  #empty b { color:var(--ink); }
+  #empty button { pointer-events:auto; background:#fff; color:var(--ink); border:1px solid #8d9c99;
+                  border-radius:6px; padding:8px 16px; cursor:pointer; font:inherit; font-weight:700; }
+  #empty button:hover { background:#eaf0ee; }
   aside { width:270px; border-left:1px solid var(--rule); background:#fff; padding:12px; overflow:auto; }
   /* 左サイドバー(統合): 上=選択中の路線の駅リスト(ここだけがスクロール) / 下=クイック操作(高さ固定)。
      幅は #splleft をドラッグで変えられる(--lw に保存) */
@@ -238,7 +254,14 @@
   </div>
   <div class="split" id="splleft" role="separator" aria-orientation="vertical" tabindex="0"
        aria-label="左サイドバーの幅" title="ドラッグで左サイドバーの幅を変更(ダブルクリックで既定値)"></div>
-  <div id="stage"><svg id="cv" width="2400" height="1600" viewBox="0 0 2400 1600" role="application" tabindex="0" aria-label="路線図の編集キャンバス(Tab で要素を順に選び、矢印キーで移動、Delete で削除)"></svg></div>
+  <div id="stage"><svg id="cv" width="2400" height="1600" viewBox="0 0 2400 1600" role="application" tabindex="0" aria-label="路線図の編集キャンバス(Tab で要素を順に選び、矢印キーで移動、Delete で削除)"></svg>
+    <!-- 空の路線図への案内(U5)。本文は pointer-events:none なので、下のキャンバスへの
+         クリック(「駅を追加」→ クリック)は通る。ボタンだけが押せる -->
+    <div id="empty" hidden>
+      <p>この路線図はまだ空です。<b>「駅を追加」</b>を押してから、キャンバスをクリックすると最初の駅が置けます。</p>
+      <button id="loadsample" title="同梱しているサンプルの路線図をこの路線図に入れる">サンプルの路線図を読み込む</button>
+    </div>
+  </div>
   <div class="split" id="splright" role="separator" aria-orientation="vertical" tabindex="0"
        aria-label="右サイドバーの幅" title="ドラッグで右サイドバーの幅を変更(ダブルクリックで既定値)"></div>
   <aside id="side"></aside>

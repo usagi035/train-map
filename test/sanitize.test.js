@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { sanitizeDocument, LIMITS } from '../src/core/sanitize.js';
 import { migrate } from '../src/core/migration.js';
 import { COLORS, BG, mkMap } from '../src/core/model.js';
+import { SAMPLE_DOC, SAMPLE_MAP } from '../src/core/sample.js';
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -226,4 +227,17 @@ test('S1-13 空の文書ではなく「路線図1件」に直せるものは直�
   assert.equal(doc.maps[0].lines.length, 1, '線路が無ければ1本作る');
   assert.ok(doc.maps[0].lines[0].stations.length === 0);
   assert.doesNotThrow(() => migrate(doc));
+});
+
+test('S1-14 同梱のサンプル(U5)は警告なしで通る(fixtures と同一)', () => {
+  // 空の路線図の案内から1クリックで入れるサンプル。**補正なしで通る**こと(S1 の要求)。
+  const r = sanitizeDocument(SAMPLE_DOC);
+  assert.deepEqual(r.warnings, [], 'サンプルが補正(警告)なしで通る');
+  assert.equal(r.doc.maps[0].name, 'サンプル路線図');
+  assert.ok(r.doc.maps[0].lines[0].stations.length >= 3, '触れる駅が入っている');
+  assert.ok(r.doc.maps[0].boxes.length >= 1, 'ラベル枠の見本も入っている');
+  // ブラウザでの検証時に localStorage へ入れ直している fixtures とずれると手順が壊れるので同一も確認
+  assert.deepEqual(r.doc, fixture(), 'test/fixtures/sample.json と同一であること');
+  // 同じサンプルを2回入れても前の参照を共有しない(複製や連続読み込みで中身が混ざらない)
+  assert.notEqual(r.doc.maps[0], SAMPLE_MAP, '入力のオブジェクトをそのまま返さない');
 });

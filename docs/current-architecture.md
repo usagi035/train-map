@@ -117,8 +117,10 @@ let ui = { map, line, sel, tool, open, home, zoom, drawing, bulk, bulkRect, bulk
 | 別ウィンドウからの取り込み | `storage` L1688(**`S` を丸ごと差し替え、履歴もリセット**) |
 | ツールバーのグループ分け・「?」のショートカット一覧(U3) | `index.html` の `.sep` / `#keyshelp` / `#keyspop` + `renderTools()` の `aria-pressed`(**状態は変えない**) |
 | 矢印キーでの移動 / Tab での選択巡回(U4) | `renderer.js` の `window keydown` → `nudge()` / `cycleSel()`。**`core.*` を呼ぶだけで直接代入はしない**、変更は `deferSave()` でまとめて1回の履歴へ。移動するのは `ui.sel`(□選択のまとめは移動しない)。読み上げ(`announceStatus`)は状態を変えない |
+| 一覧の複製 / 名前変更 / 削除の記録(U5) | `tabs.js` の `duplicateMap()` / `startRename()` / `deleteMap()` → **`core.duplicateMap()` / `core.renameMap()` を呼ぶだけ**(直接代入なし)。`save(変わったID)` を渡して履歴と**最終更新**(`KEYS.updated` = **文書本体には足さない**)を記録し、削除は `forgetMap()`。名前変更は `prompt` なし = その行だけ `<input>` に入れ替え(Enter / blur で確定、Esc で中止)、一覧ごとではなく変更した所だけ描き直す |
+| 空状態の案内とサンプルの読み込み(U5) | `renderCanvas()` が `blankMap(m)` で `#empty` の出し入れ(**表示の出し入れだけ**)、空のあいだは `#stage` のスクロールを戻す。`#loadsample` click → `core.loadSample(いま開いているID)` → `ui.line` を選び直し → `save(同じID)`。サンプルは `src/core/sample.js`、**`sanitizeDocument()` 通過を S1 のテストで保証** |
 
-**洗い出しの結果: 状態を変える箇所は上記の3グループ(キャンバス pointerdown/pointermove・編集関数・パネルの input/change/click)に集約されている。** 全数を列挙可能であり、`dispatch` への付け替えは機械的に進められる。**キーボード経由の操作(U4)も同じく `core.*` と `deferSave()` を通るだけなので、状態を書き換える経路は増えていない。**
+**洗い出しの結果: 状態を変える箇所は上記の3グループ(キャンバス pointerdown/pointermove・編集関数・パネルの input/change/click)に集約されている。** 全数を列挙可能であり、`dispatch` への付け替えは機械的に進められる。**キーボード経由の操作(U4)と、一覧・空状態の操作(U5)も同じく `core.*` と `save(変わったID)` を通るだけなので、状態を書き換える経路は増えていない。**
 
 ## 5. ID の付け方
 
@@ -161,6 +163,9 @@ const uid = () => Math.random().toString(36).slice(2, 9);   // renderer.js L25
 - `window.open('index.html#<mapId>')` で**別ウィンドウ**。hash があるウィンドウはその路線図だけを開く(L91-92)。
 - 開いているタブは `localStorage('train-map:v1:open')` に記憶(`persistOpen()` L1301)。開閉状態は `train-map:v1:acc`。
   キー一覧は `src/renderer/storage.js`(旧 `railmaps` 等からは起動時に `migrateLegacyKeys()` が移行、旧キーは残す)。
+- **路線図ごとの「最終更新」は `train-map:v1:updated`(U5)**。文書本体に足すと書き出しの JSON 形式が変わるため**別キー**に持つ。
+  記録するのは `save()` が**成功した**変更だけ(`touchMap()`)。削除は `forgetMap()`、起動時に `stampMissing()` が
+  時刻の無い路線図へ「記録開始」の時刻を付ける。一覧(空状態の案内 `#empty`・サンプル読込も含む)は表示するだけで、中身は `core.*` に任せる。
 - **別ウィンドウ同士は同一 localStorage を使い、`storage` イベントで最新を取り込む**(L1688)。取り込み時に履歴はリセット。
   Web 版では**相手の保存が届いても、こちらに未確定の作業(入力中・ドラッグ中・自動保存の保留)がある間は上書きせず**、
   画面上部のバナーで「相手の版を読み込む / 自分の版を残す」を選ばせる(S4)。

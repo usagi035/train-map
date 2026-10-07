@@ -75,16 +75,61 @@ export function updateUndoButtons() {
   if (u) u.disabled = !core.canUndo();
   if (r) r.disabled = !core.canRedo();
 }
-// 保存しつつ、変更前の状態を履歴に積む
-export const save = () => {
+/* ---------- 路線図ごとの「最終更新」(U5) ----------
+   文書本体には足さない(書き出しの JSON 形式を変えないため)。別キー `KEYS.updated` に持つ。
+   - 記録するのは「保存できた変更」だけ(保存に失敗した変更は日時にしない)。
+   - 読み込みは初回 access のとき(lazy)。node のテストでは localStorage が無いので空になる。 */
+let updated = null;
+const updatedMaps = () => {
+  if (!updated) {
+    try { updated = JSON.parse(localStorage.getItem(KEYS.updated)) || {}; } catch (e) { updated = {}; }
+  }
+  return updated;
+};
+const writeUpdated = () => {
+  try { localStorage.setItem(KEYS.updated, JSON.stringify(updated)); }
+  catch (e) { /* 一覧の日時の表示用なので握りつぶす(本体の保存失敗は save() が知らせる) */ }
+};
+/** その路線図の最終更新時刻(まだ無ければ null) */
+export const mapUpdated = id => { const v = updatedMaps()[id]; return typeof v === 'number' ? v : null; };
+/** 保存できた変更を記録する */
+export function touchMap(id) {
+  if (typeof id !== 'string' || !id) return;
+  updatedMaps()[id] = Date.now();
+  writeUpdated();
+}
+/** 削除した路線図の記録を消す */
+export function forgetMap(id) {
+  const u = updatedMaps();
+  if (!(id in u)) return;
+  delete u[id];
+  writeUpdated();
+}
+// まだ日時の無い路線図に記録開始の時刻を付ける(起動時。無くすると一覧の日時が空欄になる)
+export function stampMissing() {
+  const u = updatedMaps(), now = Date.now();
+  let add = false;
+  S.maps.forEach(m => { if (typeof u[m.id] !== 'number') { u[m.id] = now; add = true; } });
+  if (add) writeUpdated();
+}
+
+// 保存しつつ、変更前の状態を履歴に積む。
+// `changedId` は「今回どの路線図が変わったか」(U5 の最終更新の記録用)。
+// 指定が無ければいま編集している路線図。路線図を増やす・複製するなど、一覧側の
+// 操作で「いま開いている地図以外」が変わったときにだけ指定する。
+export const save = (changedId) => {
   clearTimeout(saveTimer); saveTimer = 0;
   const now = core.commit(viewNow());   // 変化が無ければ null(そのときは保存もしない)
   if (!now) return;
+  let ok = true;
   try { localStorage.setItem(KEYS.maps, now); localAuthority = false; setSaveFailed(false); } catch (e) {
     // 保存できないと黙っていると消えるので、直るか書き出をするまで消さない知らせを出す(S5)
     console.warn('自動保存に失敗しました:', e);
     setSaveFailed(true);
+    ok = false;
   }
+  // 保存できた変更だけ「最終更新」として記録する(U5)。失敗した変更は日時にしない
+  if (ok) touchMap(typeof changedId === 'string' && changedId ? changedId : ui.map);
   updateUndoButtons();
 };
 // 文字入力やスライダーは、連続入力をまとめて1回の履歴にする

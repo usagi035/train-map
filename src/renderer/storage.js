@@ -11,10 +11,12 @@ import { sanitizeDocument } from '../core/sanitize.js';
 export const NS = 'train-map:v1:';
 
 export const KEYS = {
-  maps:   NS + 'maps',    // 路線図そのもの(文書 JSON)
-  open:   NS + 'open',    // 開いているタブのID一覧
-  acc:    NS + 'acc',     // 右パネルの開閉状態
-  panelw: NS + 'panelw'   // 左右サイドバーの幅
+  maps:    NS + 'maps',     // 路線図そのもの(文書 JSON)
+  open:    NS + 'open',     // 開いているタブのID一覧
+  acc:     NS + 'acc',      // 右パネルの開閉状態
+  panelw:  NS + 'panelw',   // 左右サイドバーの幅
+  updated: NS + 'updated'   // 路線図ごとの最終更新時刻(U5)。**文書本体には足さない**:
+                            //   書き出しの JSON 形式を変えないため、別のキーに持つ
 };
 
 /** 移行前の旧キー。書込みは絶対にここでは行わない(読み取り専用)。 */

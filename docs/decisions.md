@@ -541,6 +541,68 @@ CSP がインライン実行を許している限り、入口が1つでも通れ
   直接代入なし / Tab の巡回とフォーカス条件 / 入力ガグの SELECT・contenteditable / コントラスト実測)。
   全体で 63/63 green。
 
+## 26. 初回の案内とサンプル、一覧の件数・最終更新・複製・名前変更(U5)→ 決定(2026-10-08 実装・検証済み)
+
+依頼: `IMPROVEMENTS.md` Part2 U5(First-run experience + home list additions: last-modified / count / duplicate / rename)。
+
+- **空のときの案内は `#stage` の上に置いた `#empty` オーバーレイ**(HTML は `hidden` つきで既定では出さない)。
+  - **本文は `pointer-events:none`、ボタンだけ `auto`** = 「『駅を追加』を押してキャンバスをクリック」という手順が
+    案内が出たまま実行できる(実際に案内の下をクリックして駅が置けることを確認)。
+  - `display:flex` は `[hidden]` より強いので **`#empty[hidden]{display:none}` を明示**。土台は `#stage{position:relative}`。
+  - 出し入れは **`renderCanvas()` の先頭で `blankMap(m)` を見るだけ**(表示の出し入れで、状態は変えない)。
+    空のあいだは `#stage` の `scrollLeft/Top` を 0 に戻し、案内が中央に来る。
+  - **`blankMap(m)` は名前で判定しない**(名前を変えただけで案内が出直すため)。駅・踏切・道路・バス停・
+    路線外の乗り換え駅・ラベル枠・画像が1つも無ければ空。`mkMap()` は `boxes`/`images` を作らないので
+    無い配列も空扱い。`core/model.js` に追加(`allStations()` は重複のため使わない)。
+- **同梱サンプルは `src/core/sample.js`(`SAMPLE_MAP` / `SAMPLE_DOC`、DOM 無し)**。`test/fixtures/sample.json` と
+  同一内容で、**`sanitizeDocument()` が警告なしで通ることを S1 のテストに追加**(`test/sanitize.test.js` S1-14 =
+  warnings 空 + fixture と `deepEqual` + 入力を書き換えない)。読み込みは `core.loadSample(mapId)` =
+  **開いている路線図の中身だけを丸ごと差し替え**(ID はそのままだと開いているタブ・`ui.open` とずれない)。
+  毎回 `JSON.parse(JSON.stringify())` で深コピー(連続読み込みで中身が混ざらない)。
+  `ui.line` は先頭の路線へ選び直してから `save(同じID)` → `renderAll()` + トースト。
+- **「最終更新」は文書に足さない**: 足すと**書き出しの JSON 形式が変わる**(S3 の DoD に反する)ため、
+  **別キー `KEYS.updated = 'train-map:v1:updated'`(`{ [mapId]: ms }`)に持たせる**。
+  `migrateLegacyKeys()` は移行先を明示リスト `['open','acc','panelw']` で見ているので追加分は影響しない
+  (`LEGACY` の対象にも入れない = 移行先が無い)。
+  - 記録するのは **`save()` が成功した変更だけ**(`touchMap()`、失敗時は黙って続行 = 一覧表示のため)。
+    そのため `save(changedId)` に変更(**第1引数が string のときだけ採用** = 既存の `save()` 呼び出しは
+    引数無しなので `ui.map` のまま。イベント等の非文字列引数でも安全)。
+  - 構造の変化は**明示的に ID を渡す**: 追加・複製・名前変更・削除取り消し・サンプル読込 → `save(そのID)`、
+    削除 → `forgetMap(id)` + 代わりに作った空図は `touchMap(dropId)`、取り込み → 全件 `touchMap()`。
+    起動時に `stampMissing()` が日時の無い路線図へ「記録開始」の時刻を付ける(無くすると一覧の日時が空欄)。
+    読み込みは初回 access の lazy(node テストでは localStorage が無くても動く)。
+- **複製・名前変更は core に置く**(`duplicateMap` / `renameMap`、いずれも深コピー)。要素 ID は
+  **路線図の中で閉じている**(`sanitizeDocument` が地図ごとに作り直す)ので**コピー後も要素 ID は据え置き**、
+  新しいのは地図 ID と名前(`〜 のコピー`)だけ。挿入位置は元の直後。
+- **名前変更は `prompt()` を使わない**(U2 の方針)。**その行の名前 `<span>` を `<input>` に入れ替え**、
+  `Enter` / `blur` で確定、`Esc` で中止、`maxLength = LIMITS.nameLen`、空(空白のみ)は受理しない。
+  **一覧ごと `renderAll()` しない** = 描き直すと**いま押しているボタンが外れて次のクリックが届かない**ため、
+  **変わった所だけ更新**する(名前 `.hname`・件数と時刻 `.meta`・開いていれば `renderTabs()`)。
+- **一覧の1行 = 名前 / 状態 / 開く・複製・名前を変更・削除 / 1行目に件数と最終更新**(`#home li` を `flex-wrap`
+  に、`ul` の `max-width` は 520px → 660px)。件数は `路線 N ・ 駅 N`(= `allStations().length`、乗り換え駅と
+  路線外駅を含む)+ 路線外にバス停・幹線道路・ラベル枠・画像があれば**0件を除いて**追記。
+  時刻は `最終更新 YYYY/MM/DD HH:mm`(ロケールに左右されないよう自分で組み立てる)。
+  色は注記と同じ `#52636c`(`--paper` 上 5.7:1、白地なら 6.25:1 = AA)。
+- **見送り**: 文書への `updatedAt` 追加(= 書き出し形式の変更禁止に反する)、`prompt`/`confirm`/`alert`、
+  一覧の検索・並べ替え・フィルタ(指示書外の UI 追加の禁止)、起動時にダッシュボード風のチュートリアル画面
+  (指示書は「案内 + サンプル読込」= この2つだけ)、i18n。
+- **検証(実ブラウザ http://localhost:8080/、エラー0・ダイアログ0)**:
+  ①空の路線図を作ると案内が出て(`hidden=false`・色 `#52636c`・`pointer-events` は none/auto)、
+  「駅を追加」→ 案内の下のキャンバスをクリックで**駅が1つ置け、案内が消える**。
+  ②「サンプルの路線図を読み込む」→ 駅5要素・ラベル枠1・画像1が入り、**タブの ID と表示は保たれたまま名前が
+  サンプルへ**、トースト表示、案内は出ないまま。
+  ③一覧に 4行とも件数と `最終更新`(時刻は行ごとに違う = その地図の変更時刻)。
+  ④「複製」→ 元の直後に `〜 のコピー`(件数・時刻は新規 = `save(新ID)` が効いている、**開いているタブは増えない**)。
+  ⑤名前変更: Enter で確定(span に戻る)・Esc で取消・空白のみは元の名前のまま・`maxLength=100`・
+  **開いている路線図の変更はタブの名前も追随**・`.meta` の時刻もその場で更新され、**保存値と表示が一致**。
+  ⑥localStorage に **`train-map:v1:updated` が生成され、文書(`train-map:v1:maps`)の各地図に `updated` フィールドは無い**。
+  検証後のデータは `test/fixtures/sample.json` へ復元済み。
+  ※ **スクリーンショットは今回のセッションではデスクトップが非表示のため取得できず**(DOM の実測で代替)。
+- **自動テスト**: `test/u5.test.js` 6件(空状態の HTML/CSS/配線 / `blankMap` の実挙動 / `core.loadSample` の
+  ID維持・深コピー・連続読込 / `duplicateMap`・`renameMap` の実挙動 / 最終更新が文書に無いことと
+  成功時のみ記録 / 一覧の複製・名前変更とダイアログ不使用)+ `test/sanitize.test.js` に S1-14。
+  全体で **70/70 green**。
+
 ## 18. 別タブからの上書きを止め、どちらを使うか選ばせる(S4)→ 決定(2026-10-07 実装・検証済み)
 
 依頼: `IMPROVEMENTS.md`(指示書 S4)。`storage` ハンドラはドラッグ中しか見ていず、入力中でも文書を

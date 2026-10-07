@@ -11,7 +11,8 @@ import { core, ui, replaceUi, esc, curMap, curLine, findStation, linesOf, viewNo
          lineEditBlocked,
          snapOn, autoselOn, snapPt, renderAll, renderTools, del, cancelRoad, finishRoad, startRoadDrawing,
          addRoadPoint, updateRoadHint, imgPick,
-         keepLocalVersion, clearLocalAuthority, shouldAskRemote, setSaveFailed } from './ui-state.js';
+         keepLocalVersion, clearLocalAuthority, shouldAskRemote, setSaveFailed,
+         touchMap, stampMissing } from './ui-state.js';
 import { cv, stage, pt, setZoom, centerOn, renderCanvas, setBandSource } from './canvas.js';
 import { renderSide } from './side-panel.js';
 import { renderLeft } from './left-panel.js';
@@ -590,6 +591,8 @@ document.getElementById('file').addEventListener('change', e => {
       replaceUi({ map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: ui.zoom, drawing: null }); persistOpen();
       dropRemote();   // 文書を入れ替えたので、いま出ている「別タブの変更」は無効(S4)
       save(); renderAll();
+      // 入れて替えたので、全部の路線図の最終更新として記録する(U5)
+      S.maps.forEach(m => touchMap(m.id));
       toast((warns && warns.length) ? '取り込みました。' + warns.length + '件の項目を補正しました。' : '取り込みました。',
         { key: 'import' });
       if (warns && warns.length) console.warn('読み込んだデータで直した項目:', warns);
@@ -601,6 +604,19 @@ document.getElementById('file').addEventListener('change', e => {
     }
   };
   r.readAsText(f); e.target.value = '';
+});
+
+/* ---------- 空の路線図の案内からサンプルを読み込む(U5) ---------- */
+// 同梱のサンプルは中身を入れ替える(開いているタブの ID はそのまま)。
+// データは src/core/sample.js にあり、sanitizeDocument を通ることを S1 のテストで確かめる。
+document.getElementById('loadsample').addEventListener('click', () => {
+  const m = curMap();
+  if (!m || !core.loadSample(m.id)) return;
+  ui.line = curMap().lines[0].id;   // 中身を入れ替えたので、路線IDを選び直す
+  ui.sel = null;
+  save(m.id);                       // 入れた路線図の最終更新として記録する(U5)
+  renderAll();
+  toast('サンプルの路線図を読み込みました');
 });
 
 /* ---------- 画像のインポート ---------- */
@@ -857,5 +873,7 @@ wireSplit('splleft', 'left');
 wireSplit('splright', 'right');
 
 /* 各モジュールの描画関数を登録してから最初の描画(登録は renderAll より前に行う) */
+// まだ日時の無い路線図に「記録開始」の時刻を付けてから描く(U5: 一覧の最終更新)
+stampMissing();
 setRender({ tabs: renderTabs, home: renderHome, canvas: renderCanvas, side: renderSide, left: renderLeft });
 renderAll();
