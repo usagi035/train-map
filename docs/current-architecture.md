@@ -115,6 +115,7 @@ let ui = { map, line, sel, tool, open, home, zoom, drawing, bulk, bulkRect, bulk
 | JSON / PNG 書き出し | `#exp` L1225 / `exportImage()` L1303(**状態は変えない**) |
 | タブ開閉・路線図の新規/削除 | `openMap` L1328・`closeTab` L1333・`newMap` L1342・`deleteMap` L1343 |
 | 別ウィンドウからの取り込み | `storage` L1688(**`S` を丸ごと差し替え、履歴もリセット**) |
+| ツールバーのグループ分け・「?」のショートカット一覧(U3) | `index.html` の `.sep` / `#keyshelp` / `#keyspop` + `renderTools()` の `aria-pressed`(**状態は変えない**) |
 
 **洗い出しの結果: 状態を変える箇所は上記の3グループ(キャンバス pointerdown/pointermove・編集関数・パネルの input/change/click)に集約されている。** 全数を列挙可能であり、`dispatch` への付け替えは機械的に進められる。
 

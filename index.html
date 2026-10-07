@@ -27,9 +27,20 @@
   #home li > span:first-child { flex:1; font-weight:700; }
   #home .st { color:var(--signal); font-size:12px; }
   #home button { background:#fff; color:var(--ink); border:1px solid #b9c4c1; border-radius:5px; padding:5px 11px; cursor:pointer; font:inherit; }
-  #tools { display:flex; gap:6px; align-items:center; background:var(--paper); color:var(--ink);
+  #tools { display:flex; gap:6px; align-items:center; background:var(--paper); color:var(--ink); position:relative;
            margin:0 -10px; padding:8px 10px; border-bottom:1px solid var(--rule); flex-wrap:wrap; }
   #tools .sp { flex:1; }
+  /* グループの区切りと、ショートカット一覧のポップアップ(U3) */
+  #tools .sep { flex:none; width:1px; align-self:stretch; margin:3px 4px; background:#c3cecb; }
+  #keyshelp { font-weight:700; }
+  #keyspop { position:absolute; right:8px; top:100%; z-index:96; max-width:min(440px, calc(100vw - 16px));
+             background:#fff; color:var(--ink); border:1px solid #b9c4c1; border-radius:8px;
+             box-shadow:0 10px 26px rgba(0,0,0,.2); padding:10px 14px; font-size:12.5px; line-height:1.6; }
+  #keyspop[hidden] { display:none; }
+  #keyspop h3 { margin:0 0 6px; font-size:13px; }
+  #keyspop dl { display:grid; grid-template-columns:auto 1fr; gap:3px 14px; margin:0; }
+  #keyspop dt { font-family:ui-monospace, Consolas, monospace; font-weight:700; white-space:nowrap; }
+  #keyspop dd { margin:0; }
   button { font:inherit; }
   #tools button, aside button { background:#fff; color:var(--ink); border:1px solid #b9c4c1; border-radius:5px; padding:5px 11px; cursor:pointer; }
   #tools button.on { background:var(--signal); border-color:var(--signal); color:#fff; }
@@ -166,23 +177,43 @@
 <header>
   <div id="tabs"></div>
   <div id="tools">
-    <button data-tool="select">選択・移動</button>
-    <button data-tool="station">駅を追加</button>
-    <button data-tool="hub">乗り換え駅を追加</button>
-    <button data-tool="crossing">踏切を追加</button>
+    <button data-tool="select" title="クリックして選択・ドラッグで移動 (Esc でこのツールへ)">選択・移動</button>
+    <span class="sep" aria-hidden="true"></span>
+    <button data-tool="station" title="空白をクリックして駅を追加">駅を追加</button>
+    <button data-tool="hub" title="駅をクリックして乗り換え駅(他の路線にも同じ駅を置く)">乗り換え駅を追加</button>
+    <button data-tool="crossing" title="線の上に置く (踏切は路線ごとに1つずつ)">踏切を追加</button>
     <button data-tool="busstop" title="幹線道路とは独立したバス停">バス停を追加</button>
     <button data-tool="terminal" title="幹線道路とは独立したバスターミナル">バスターミナルを追加</button>
-    <button data-tool="road" title="クリックで頂点を追加して道路を引く">幹線道路を引く</button>
-    <button data-tool="box">ラベル枠を追加</button>
+    <button data-tool="road" title="クリックで頂点を追加して道路を引く (Enter / ダブルクリックで確定、Esc で中止、Ctrl+Z で1点戻す)">幹線道路を引く</button>
+    <button data-tool="box" title="ドラッグして四角い枠(地図の凡例など)を追加">ラベル枠を追加</button>
     <button id="addimg" title="画像ファイル(PNG・JPGなど)を配置して、移動・リサイズ・下敷きができます">画像を追加</button>
-    <button id="del">選択を削除</button>
+    <span class="sep" aria-hidden="true"></span>
+    <button id="del" title="選択中の要素を削除 (Delete / Backspace。□で複数選択するとまとめて)">選択を削除</button>
     <button id="undo" title="元に戻す (Ctrl+Z)">↶ 元に戻す</button>
     <button id="redo" title="やり直す (Ctrl+Y / Ctrl+Shift+Z)">↷ やり直す</button>
     <span class="sp"></span>
-    <button id="zout" title="縮小">－</button><span id="zlabel" style="min-width:44px;text-align:center">100%</span><button id="zin" title="拡大">＋</button><button id="zreset" title="等倍に戻す">等倍</button>
-    <button id="exp">書き出し</button>
-    <button id="imp">読み込み</button>
+    <button id="zout" title="縮小 (Ctrl+ホイールでもズームできます)">－</button><span id="zlabel" style="min-width:44px;text-align:center">100%</span><button id="zin" title="拡大 (Ctrl+ホイールでもズームできます)">＋</button><button id="zreset" title="等倍に戻す">等倍</button>
+    <span class="sep" aria-hidden="true"></span>
+    <button id="exp" title="路線図をJSONファイルで保存">書き出し</button>
+    <button id="imp" title="JSONファイルを開く">読み込み</button>
     <button id="expimg" title="PNG画像として保存">画像書き出し</button>
+    <span class="sep" aria-hidden="true"></span>
+    <button id="keyshelp" title="ショートカットの一覧" aria-expanded="false" aria-controls="keyspop">?</button>
+    <div id="keyspop" hidden>
+      <h3>ショートカット</h3>
+      <dl>
+        <dt>Delete / Backspace</dt><dd>選択中の駅・道路・ラベル枠などを削除(□で複数選択するとまとめて)</dd>
+        <dt>Esc</dt><dd>道路の描画を中止 → □選択を解除 → 「選択・移動」へ戻る</dd>
+        <dt>Enter</dt><dd>描画中の幹線道路を確定(ダブルクリック・ダブルタップでも)</dd>
+        <dt>Ctrl + Z / Ctrl + Y</dt><dd>元に戻す / やり直す(Ctrl+Shift+Z でもやり直し)</dd>
+        <dt>Space + ドラッグ</dt><dd>画面をスクロール(中ボタンドラッグでも可)</dd>
+        <dt>Ctrl + ホイール</dt><dd>カーソル位置を基準にズーム</dd>
+        <dt>← / →</dt><dd>サイドバーの幅を10px 変える(Shift 付きは1px)</dd>
+        <dt>Home / End / Enter</dt><dd>ハンドルを 最小 / 最大 / 既定 へ</dd>
+        <dt>Alt + W</dt><dd>表示中の路線図を閉じる(タブの「✕」と同じ)</dd>
+        <dt>タッチ 1本指 / 2本指</dt><dd>いま選んでいるツールの操作 / ズームとパン</dd>
+      </dl>
+    </div>
     <input type="file" id="file" accept=".json" hidden>
     <input type="file" id="imgfile" accept="image/*" hidden>
   </div>

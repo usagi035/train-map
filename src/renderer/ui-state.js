@@ -225,7 +225,11 @@ export function pickInBox(m, b) {
   return hit;
 }
 export function renderTools() {
-  document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === ui.tool));
+  document.querySelectorAll('[data-tool]').forEach(b => {
+    const on = b.dataset.tool === ui.tool;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');   // 「いま押しているモード」を支援技術にも伝える(U3)
+  });
   document.getElementById('hint').textContent = HINTS[ui.tool] || '';
   document.getElementById('cv').style.cursor = ui.tool === 'select' ? 'default' : 'crosshair';
   updateUndoButtons();

@@ -144,8 +144,10 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 ```html
 <header>
   <div id="tabs">            … 路線図タブ + 「＋」(追加) + 「一覧」     ← renderTabs()
-  <div id="tools">           … ツールバー。data-tool ボタン群、
-                                #del #undo #redo、ズーム、#exp #imp #expimg、
+  <div id="tools">           … ツールバー(グループごとに `.sep` で区切る = U3)。
+                                [選択] | [追加: data-tool 群 +#addimg] |
+                                [#del #undo #redo] | `.sp`(余白) | [ズーム #zout #zlabel #zin #zreset] |
+                                [#exp #imp #expimg] | [? #keyshelp → #keyspop 一覧]、
                                 非表示の #file(JSON) と #imgfile(画像)
 <main>
   <div id="leftcol">         … 左サイドバー(1列に統合)
@@ -326,7 +328,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | --- | --- |
 | `renderTabs()` | タブ行を生成(選択中 `.on`、✕、`＋`、`一覧`) |
 | `renderHome()` | 路線図一覧(開く/削除/新しい路線図) |
-| `renderTools()` | ツールボタンの `.on` 切替、ヒント文、カーソル、Undo/Redo 有効化 |
+| `renderTools()` | ツールボタンの `.on` 切替 + **`aria-pressed`(「いま押しているモード」= U3)**、ヒント文、カーソル、Undo/Redo 有効化 |
 | **`renderCanvas()`** | SVG を文字列生成で**全書き換え**。順序: 背景+グリッド → 画像(背面/back) → ラベル枠 → 幹線道路 → 描画中プレビュー → 踏切の道路バー → **線路+駅間隔の数字** → 踏切記号 → **接続線(1本化)** → **駅** → バス停 → 画像(前面/front) → □選択の枠とハイライト。非表示路線・非表示種類は描かない。選択中は破線の枠とリサイズ用 ■ を足す |
 | └ 内部 `drawImages(zone)` | 画像要素の描画。**back かつ非選択のみ `pointer-events:none`**(下の要素を選べるように) |
 | └ 内部 `drawStation(s, l)` | 駅の形(丸/二重丸/四角/ひし形)・ハブの点線・選択枠・駅名(`nameX/nameY/nameRot` 回転) |
@@ -393,6 +395,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | 箇所 | 動作 |
 | --- | --- |
 | `#tools click` | ツール切替(道路描画中は先に確定)、`#del` 削除、`#undo`/`#redo`、ズーム(#zin/#zout/#zreset)、`#imp`→JSON読込ダイアログ、`#addimg`→画像ダイアログ、`#exp`→**JSON書き出し**(`railmaps-YYYYMMDD-HHmm.json` = 日時入り)、`#expimg`→PNG書き出し(名前は地図名を `safeFilename()` で加工 = S6②)。※ ボタンは `blur()` して Enter/Space の誤爆を防止 |
+| `#keyshelp` click / Esc / 場所の click | 「?」で**ショートカット一覧(#keyspop)を開閉**(U3)。`aria-expanded` を追従させ、Esc と一覧の外を押すと閉じる(他の Esc の挙動はそのまま) |
 | `#file change` | **10MB を超えたら読む前に中止**(S6)→ JSON を parse → `sanitizeDocument()` → `migrate()` → `ui` を初期化 → `save()`。直せない文書なら alert |
 | `#imgfile change` | `importImageFile(file, imgReplaceId)` を呼んで即クリア |
 

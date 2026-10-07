@@ -425,6 +425,18 @@ const stamp = () => {
 };
 const jsonFileName = () => `railmaps-${stamp()}.json`;
 
+/* ---------- ツールバーの「?」= ショートカット一覧(U3) ----------
+   Space での画面移動など、ボタンを見ただけでは分からない操作を1か所に集めた。
+   開いたままにせず、場所を押す・Esc ですぐ閉じる。 */
+const keyshelp = document.getElementById('keyshelp'), keyspop = document.getElementById('keyspop');
+function setKeysPop(on) {
+  keyspop.hidden = !on;
+  keyshelp.setAttribute('aria-expanded', on ? 'true' : 'false');
+}
+keyshelp.addEventListener('click', e => { e.stopPropagation(); setKeysPop(keyspop.hidden); });
+document.addEventListener('click', e => { if (!keyspop.hidden && !keyspop.contains(e.target)) setKeysPop(false); });
+window.addEventListener('keydown', e => { if (e.key === 'Escape' && !keyspop.hidden) setKeysPop(false); });
+
 /* ---------- toolbar / tabs ---------- */
 document.getElementById('tools').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
