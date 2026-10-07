@@ -68,9 +68,16 @@
   #lines .lbtns .lyr { min-width:26px; }
   #lines .lyr:disabled { opacity:.35; cursor:default; }
   #lines .lyr:disabled:hover { background:#fff; }
-  .layeropts { display:grid; grid-template-columns:1fr 1fr; gap:1px 10px; margin-bottom:6px; }
-  .layeropts label { display:flex; align-items:center; gap:6px; margin-bottom:3px; font-size:12.5px; color:var(--ink); cursor:pointer; }
-  .layeropts input[type=checkbox] { display:inline-block; width:auto; margin:0; padding:0; }
+  .layeropts { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px; }
+  /* トグルボタン(単一のON/OFF。チェックボックスの代わりに使う) */
+  .tgl { display:inline-flex; align-items:center; justify-content:flex-start; gap:6px; padding:5px 11px;
+         font-size:12.5px; font-weight:700; color:#5c6f77; background:#fff;
+         border:1px solid #b9c4c1; border-radius:15px; cursor:pointer; white-space:nowrap; }
+  .tgl::before { content:""; flex:none; width:8px; height:8px; border-radius:50%; background:#d5dedb; }
+  .tgl:hover { background:#eaf0ee; }
+  .tgl[aria-pressed="true"] { color:#fff; background:var(--signal); border-color:#186f4a; }
+  .tgl[aria-pressed="true"]::before { background:#fff; }
+  .tgl[aria-pressed="true"]:hover { background:#1a7a50; }
   /* 右パネルのグループ(見出しクリックで開閉するセクション) */
   .sec { border:1px solid #dde6e3; border-radius:7px; background:#fff; margin-bottom:8px; overflow:hidden; }
   .sech { display:flex; align-items:center; gap:7px; width:100%; padding:7px 9px; background:#eef3f1; border:0; font-size:13px; font-weight:700; color:#2b3a41; text-align:left; cursor:pointer; }
@@ -140,6 +147,6 @@
 </main>
 <div id="hint"></div>
 
-<script src="renderer.js"></script>
+<script type="module" src="../renderer/renderer.js"></script>
 </body>
 </html>

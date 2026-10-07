@@ -1,0 +1,112 @@
+# 判断ポイント記録 (decisions)
+
+仕様書13章「未確定事項や判断が必要なときは、勝手に決めず質問するか、`docs/decisions.md` に選択肢と理由を記録して確認を待つ」に従う。
+状態: **確認待ち** = 質問中 / **決定** = 承認済み・実装してよい / **保留** = 後の Phase まで持ち越し
+
+| # | 事項 | 必要な Phase | 状態 |
+|---|---|---|---|
+| 1 | モジュール化の方式 | 1 | **決定** |
+| 2 | ID の生成方式 | 1〜2 | **決定: `crypto.randomUUID()` に統一** |
+| 3 | Undo/Redo の方式 | 2 | **決定** |
+| 4 | ファイル形式のバージョン管理 | 1〜2 | **決定: `formatVersion` は付けない** |
+| 5 | 「共同編集」UI の置き場 | 6 | 保留 |
+| 6 | 別ウィンドウ同期(`storage`)との役割分担 | 3 | 保留 |
+| 7 | Snapshot の提供 Peer / 送信中の Operation の扱い | 4 | 保留 |
+| 8 | Operation 全体の順序付け・競合解決 | 5 | 保留 |
+| 9 | 再接続・オンライン時の Undo | 7 | 保留 |
+| 10 | 画面側の分割方針(Stage C) | 1 | **決定(実装・検証済み)** |
+
+---
+
+## 1. モジュール化の方式 → **決定: ESM(`<script type="module">`)を採用**
+
+- **確認したこと**: Electron 33・`file://` 読み込みで、`<script type="module">` の静的 import と動的 `import()` の**両方が動作する**ことを検証した(検証用アプリで `ESM_STATIC_OK` / `ESM_DYNAMIC_OK` を確認)。
+- 現行の CSP(`default-src 'self'; script-src 'self' 'unsafe-inline'`)も同一オリジンのモジュールを許可する。
+- **選択肢**
+  - (A) **ESM を使う** ← 採用。仕様3.2の「`ui` は `online` を `import()` で動的に読み込む」と整合。ファイル分割も自然にできる。
+  - (B) グローバルスクリプトを複数分割(順序依存・名前空間オブジェクト) — 実装は簡単だが依存の向きを機械的に守れない。
+  - (C) ビルドツール(bundler)を導入 — 仕様13.6「依存は原則追加しない」に反する。
+- **注意**: `package.json` の `"type"` は**変更しない**(`main.js` / `scripts/` は CommonJS のまま)。ESM は **renderer 側だけ**で使う。`main.js` を ESM 化する必要はない。
+
+## 0. 今回の範囲(Scope 0)**決定**
+
+- **Phase 1(Core の分割)まで**とし、完了条件を満たしたら報告して停止する。Phase 2(Operation 化)以降は行わない。
+- 対象は**エディター側(このリポジトリ)のみ**。シグナリングサーバーは別リポジトリのため今回作らない。
+- ブランチ: `refactor/core-split`(仕様9.3の案)。開始前に main へ `pre-collab` タグを付け、origin へ push 済み。
+
+## 0.1 フォルダ構成(ルート直下を絞る) → **決定: `src/main/` へ移動**
+
+2026-10-05、依頼により**ルート直下に置くファイルを限る**方針を採用した(当初の「`main.js` はルートに残す」から変更)。
+
+- `main.js` → `src/main/main.js`(`package.json` の `"main"` を変更)
+- `index.html` → `src/ui/index.html`(`main.js` の `loadFile` を `__dirname` 基準に変更)
+- `renderer.js` → `src/ui/renderer.js`(`index.html` からの相対参照は変更不要)
+- `AI-rule.md` / `code_Desc.md` / 仕様書2本 → `docs/`
+- `up.bat` → `scripts/up.bat`(追跡外のまま)
+- ルート直下の追跡対象ファイルは **`package.json` / `README.md` / `.gitignore` の3つ**
+- パッケージ対象(`package.json` の `build.files`)は `["src/**/*"]` に変更
+
+**検証**: 移動後に `electron .` を起動(8秒間、異常なし)、続けて `src/ui/index.html` を実際に読ませるプローブで `#tabs` / `#side` / `#tools` / `#stage` の生成とコンソールエラー0件を確認した。
+
+## 2. ID の生成方式 → **決定: (B) `crypto.randomUUID()` に統一**
+
+2026-10-05 確認。**新しく作られる ID だけ**が変わる(既存ファイルに入っている ID・`migrate()` は変更しない)。
+`uid()` の呼び出し元(駅・路線・踏切・道路・ラベル枠・画像・路線図の生成)を `newId()` に付け替える。
+
+仕様4.3・未確定事項9。Phase 0 の結果、**既存コードは既にランダム**(`uid()` = `Math.random().toString(36).slice(2,9)` の7文字)で、連番ではない。
+
+| 選択肢 | 利点 | 欠点 |
+|---|---|---|
+| (A) **既存の `uid()` を維持** | 変更不要。既存ファイルと完全互換。Phase 1 の「動作を変えない」に最も忠実 | `crypto` 非依存(乱数の品質は低いが7文字で衝突は実質無い) |
+| (B) `crypto.randomUUID()` に統一 | 仕様の提案に準拠。衝突リスクゼロ | 新規に作る ID の形式が変わる(既存 ID は不変)。Phase 1 の範囲外の変更になる |
+| (C) Phase 1 では維持し、Phase 2(Operation 化)で randomUUID に切替 | リファクタリングと機能変更を混ぜない(仕様9.2.5) | 2回手をかける |
+
+- 既存 ID を書き換える処理は**不要**(ID は生成時のみ)。`migrate()` の変更も不要。
+
+## 3. Undo/Redo の方式 → **決定: 既存のスナップ方式を維持(Phase 7 まで変更しない)**
+
+- 仕様9.3 が Phase 2 の完了条件を「Undo/Redo は既存の挙動のまま」「ローカルの動作が変わらない」と定めているため、**スナップ方式(`undoStack`/`redoStack` に JSON 全文を積む)をそのまま残す**。
+- Operation 履歴への移行は未確定事項6(オンライン時の Undo)と共に **Phase 7** で検討。
+
+## 4. ファイル形式のバージョン管理 → **決定: `formatVersion` は付けない**
+
+2026-10-05 確認。Phase 1 は `S` の構造を変えないため、**形式変更は発生しない**。
+`migrate()` は既存のまま使い、旧形式は「バージョンなし = 旧形式」として扱う。将来、形式を変えるときに付ける。
+
+仕様5章・未確定事項13。Phase 1(Core 分割)・Phase 2(Operation 化)は **`S` の構造を変えない**ため、形式変更は発生しない。
+
+| 選択肢 | 内容 |
+|---|---|
+| (A) **今回 `formatVersion` を付けない** ← 推奨 | 形式を変えないため追加の必要が無い。旧形式の変換は既存の `migrate()` が担う。将来、形式を変えるときに付ける |
+| (B) 早めに付けておく | 将来の変更に備えられるが、**バージョン1(形式変更前)を明示的に保存し始める**ことになり、旧アプリで開いたときの挙動が変わる |
+
+## 5. 「共同編集」UI の置き場 → **保留**(Phase 6)
+
+現状アプリに**メニューは無く**(`setMenuBarVisibility(false)`、メニュー定義なし)、操作はツールバーと右パネル。
+選択肢: (A) ツールバーに「共同編集」ボタン群 / (B) メニューを有効化して追加 / (C) 右パネルにグループを追加。
+
+## 6. 別ウィンドウ同期(`storage` イベント)との役割分担 → **保留**(Phase 3)
+
+既に同一 localStorage 経由のリアルタイム同期が存在する。オンライン機能と併存させるか、オンライン中は無効にするかを Phase 3 で決める。
+
+## 7〜9 → 仕様書12章のとおり、該当 Phase の直前に決定する。
+
+## 10. 画面側の分割方針(Stage C)→ **決定(2026-10-05 実装・検証済み)**
+
+`docs/core-split-instruction.md` §8〜§12 に沿って `src/ui/renderer.js` を画面モジュールへ分割した。
+
+- **構成**: `src/renderer/` に `ui-state.js`(共通状態・共通操作・`renderAll`)、`canvas.js`、
+  `side-panel.js`、`left-panel.js`、`tabs.js`、`renderer.js`(入口・入力配線)。旧 `src/ui/renderer.js` は削除。
+- **import の向きは `ui-state → 各画面モジュール` の一方向だけ**(相互 import で循環しない)。
+  `renderer.js` は入口として他から import されない。core は画面のどのモジュールからも import できてよい
+  (`renderer → core` の一方向は維持、core は DOM/Electron 非依存のまま)。
+- **描画の登録**: `renderAll()` は `ui-state.js` に置き、各モジュールの描画関数は `renderer.js` が
+  `setRender({tabs, home, canvas, side, left})` で**最初の `renderAll()` より前**に登録する。
+  1つだけ描き直す場合は `renderPart(name)`(入力中の欄を作り直さないため)。
+- **画面側の小さな共有状態**: 「画像を変更」の差し替え対象は 2つのモジュールで使うため `ui-state.js` の
+  `imgPick`(可変オブジェクト)に集約。ESM の import は束縛に代入できないため、可変のものは
+  `ui` → `replaceUi(next)`、状態全体 → `replaceState(next)` のように**代入ではなく関数**で渡す。
+- **core の生成場所**: `ui-state.js` が生成し、画面側全モジュールがそこから import する
+  (`core` を先に作らないと起動時の `importDocument` が動かないため)。
+- **検証**: `node --check`(全モジュール)と core スモーク全 ok / ブラウザ回帰 64 項目 + 追加 16 項目合格・
+  コンソールエラー 0 件 / Electron(`file://`)で起動・編集・再読込・コンソール問題 0 件。

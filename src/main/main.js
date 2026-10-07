@@ -1,4 +1,5 @@
 const { app, BrowserWindow } = require('electron');
+const path = require('path');
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -12,7 +13,8 @@ function createWindow() {
     action: 'allow',
     overrideBrowserWindowOptions: { width: 1200, height: 760, autoHideMenuBar: true, title: '路線図エディタ' }
   }));
-  win.loadFile('index.html');
+  // __dirname = src/main。画面は src/ui/ に置く(ルートに置くファイルを絞るため)
+  win.loadFile(path.join(__dirname, '..', 'ui', 'index.html'));
 }
 
 // Ctrl+W(Cmd+W)はウィンドウではなく、開いている路線図を閉じる。
