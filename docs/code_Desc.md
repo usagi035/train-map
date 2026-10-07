@@ -29,6 +29,7 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
 | `railmaps` | 全路線図データ `S`(1つの JSON) | `save()` / `applySnap()` |
 | `railopen` | 開いているタブの路線図ID配列 | `persistOpen()` |
 | `railacc` | 右パネル各グループの開閉状態(クイック操作パネル `#quick` は開閉を持たないため対象外) | `saveAcc()` |
+| `railpanelw` | 左右サイドバーの幅 `{left, right}`(px)。ドラッグ・キーボード・ダブルクリックで変更 | `savePanelW()`(`renderer.js`) |
 
 > **注意**: 同じブラウザで複数タブを開くと、最後に保存した側が勝つ(上書き競合)。これを防ぐ仕組みは無いので、
 > 保存のたびに発火する `storage` イベント(§5.14)で変更を互いに取り込む。単一インスタンスロックの代わりの制御。
@@ -50,7 +51,7 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
 | `src/renderer/side-panel.js` | 右パネルの描画(`renderSide` / `sec`)と、左のクイック操作パネル(`renderQuick`)。イベントは `#side` と `#quick` の両方へ登録 |
 | `src/renderer/left-panel.js` | 左パネルの描画(`renderLeft` / `stationGlyph`)と駅の並べ替え |
 | `src/renderer/tabs.js` | タブと一覧(ホーム)の描画・操作(`renderTabs` / `renderHome` / `openMap` / `closeTab` / `newMap` / `deleteMap`) |
-| `src/renderer/renderer.js` | 画面側の入口(約460行)。初期化、マウス・キー・ファイル入力、`storage` 同期、各モジュールの描画関数の登録 |
+| `src/renderer/renderer.js` | 画面側の入口(約540行)。初期化、マウス・キー・ファイル入力、`storage` 同期、**サイドバーの幅管理(`wireSplit`)**、各モジュールの描画関数の登録 |
 | `index.html` | 画面の HTML / CSS(ルート直下) |
 | `package.json` | npm スクリプト(`start` / `serve` = 開発用サーバー)。依存パッケージ・ビルド設定は無い |
 | `scripts/serve.cjs` | 開発用の静的サーバー(Node 標準モジュールのみ。MIME とパストラバーサル対策を持つ) |
@@ -130,24 +131,32 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
                                 #del #undo #redo、ズーム、#exp #imp #expimg、
                                 非表示の #file(JSON) と #imgfile(画像)
 <main>
-  <aside id="left">          … 左パネル: 選択中の路線の駅リスト(並べ替え) ← renderLeft()
-  <aside id="quick">         … クイック操作パネル(スナップ・選択へ戻る・路線追加・環状線・ターミナル設定・その他の表示) ← renderQuick()
+  <div id="leftcol">         … 左サイドバー(1列に統合)
+    <aside id="left">        …   上: 選択中の路線の駅リスト(並べ替え) ← renderLeft()
+    <aside id="quick">       …   下: クイック操作パネル(高さ固定)      ← renderQuick()
+  </div>
+  <div class="split" id="splleft">  … 左サイドバーの幅ハンドル(7px)
   <div id="stage"><svg id="cv"> … 描画キャンバス(SVG)                    ← renderCanvas()
+  <div class="split" id="splright"> … 右サイドバーの幅ハンドル(7px)
   <aside id="side">          … 右パネル: 設定(6グループ)                  ← renderSide()
   <div id="home">            … 路線図の一覧画面                          ← renderHome()
 <div id="hint">              … ツールごとの操作ヒント(固定表示)
 <script type="module" src="./src/renderer/renderer.js">
 ```
 
-3つのパネルは `<main>` の flex で横に並びます(左から `#left` 270px → `#quick` 182px → `#stage`(残り) → `#side` 270px)。
-操作ヒントの `#hint` は左端から464px(270 + 182 + padding)の位置に固定表示します。
+`<main>` の flex は左から `#leftcol`(幅 `--lw`、既定400px) → `.split #splleft`(7px) → `#stage`(残り) → `.split #splright`(7px) → `#side`(幅 `--rw`、既定270px) → `#home`(一覧画面用)。
+`#leftcol` は縦の flex で、**上が `#left`(残り高さをもらってスクロール)、下が `#quick`(`flex:0 0 auto` で高さ固定、`max-height:75%`)** という1列の統合レイアウト。
+操作ヒントの `#hint` は左サイドバーの幅に追従して `left: calc(var(--lw) + 17px)` に置く。
 
 | 列 | 幅 | 中身 | 描画 |
 | --- | --- | --- | --- |
-| `#left` 左パネル | 270px | 選択中の路線の駅リスト(経路順・↑↓・ドラッグ並べ替え) | `renderLeft()` |
-| `#quick` クイック操作パネル | 182px | **路線**(`#snap` グリッドに合わせる・`#autosel` 追加後に選択へ戻る・路線を追加・`#lloop` 環状線) / **ターミナル(乗り換え駅)**(`#shub` と属する路線チェック) / **その他の表示**(`.showel` 4スイッチ)。開閉なしの常設列 | `renderQuick()` |
-| `#stage` | 残り | SVG キャンバス | `renderCanvas()` |
-| `#side` 右パネル | 270px | 開閉できる6グループ(選択中 / 路線(レイヤー) / 選択中の路線 / 幹線道路 / 画像 / 路線図の設定) | `renderSide()` |
+| `#leftcol` 左サイドバー | `var(--lw)` 既定400px(260〜640px、ドラッグで変更) | **上 `#left`**: 選択中の路線の駅リスト(経路順・↑↓・ドラッグ並べ替え) / **下 `#quick`**: 開閉なしの常設パネル(下端から高さ固定) | `renderLeft()` / `renderQuick()` |
+| `.split`(`#splleft` `#splright`) | 各7px | 幅変更ハンドル(`role="separator"` `tabindex="0"`、ドラッグ・ダブルクリック・キーボード) | — |
+| `#stage` | 残り(最低200px `STAGE_MIN`) | SVG キャンバス | `renderCanvas()` |
+| `#side` 右パネル | `var(--rw)` 既定270px(220〜560px、ドラッグで変更) | 開閉できる6グループ(選択中 / 路線(レイヤー) / 選択中の路線 / 幹線道路 / 画像 / 路線図の設定) | `renderSide()` |
+
+`#quick` の中身(`renderQuick()` が描く)は、**路線**(`#snap` グリッドに合わせる・`#autosel` 追加後に選択へ戻る・路線を追加・`#lloop` 環状線) / **ターミナル(乗り換え駅)**(`#shub` と属する路線チェック) / **その他の表示**(`.showel` 4スイッチ)の3グループ。
+一覧(ホーム)画面では `renderAll()` が `#leftcol`・`#splleft`・`#splright` をまとめて非表示にする。
 
 > クイック操作パネルに置く項目のうち4つ(環状線・乗り換え駅・その他の表示4つ)は**元来右パネルにあったもの**で、左へ移動しています(重複表示はしない)。「グリッドに合わせる」「追加後に選択へ戻る」の2つは**元来ツールバーにあったチェックボックス**の移動です。
 
@@ -161,11 +170,14 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 | パネル共通 | `aside label` / `.row` / `.note` | ラベル・横並び行・補足文 |
 | 左右リスト | `#lines` `#roadlist` `#imglist` `.linklist` | 行・選択 `.on`・ハンドル `.lhandle` |
 | レイヤー操作 | `#lines .lyr` / `.lyr:disabled` / `#lines li.off` | 👁🔒↑↓ ボタン、非表示行の薄表示 |
+| 左サイドバー | `#leftcol` / `#left` / `#quick` | 縦の1列(`flex-direction:column`)。上 `#left` は `flex:1 1 auto`+`min-height:0` でスクロール、下 `#quick` は `flex:0 0 auto`+`max-height:75%` で下端から高さ固定。幅は `--lw` |
+| 幅ハンドル | `.split` / `.split.drag` / `.split:focus-visible` | 幅7px、縦線(`::after`)を表示。ドラッグ中は `#signal` 色、フォーカス時はアウトライン |
+| 右パネル | `#side` | 幅は `--rw`(既定270px)。`border-left` はハンドル側へ寄せるため無し |
 | **トグルスイッチ** | `#quick .qsw` / `.track` / `input:checked + .track` | 左に文言・右にレール型スイッチ。ON=緑・OFF=グレー、スライダーが右へ送られる。中身は `checkbox`(`.swin`)なので判定は従来のチェックボックスと同じ。単一ON/OFF項目に使用 |
 | 右パネルのグループ | `.sec` `.sech` `.sect` `.secn` `.seci` `.secb` `.subh` | 開閉セクション(見出し=ボタン、`▾`回転、バッジ `.secn`) |
-| クイック操作パネル | `#quick h3` / `#quick .qline` / `#quick .qsw` | 左パネル右の常設列(幅182px、開閉なし)。破線で区切る見出し、幅いっぱいのスイッチ行、属する路線のチェック行(路線名は省略記号) |
+| クイック操作パネル | `#quick h3` / `#quick .qline` / `#quick .qsw` | 左サイドバー下部の常設パネル(開閉なし・高さ固定・横幅は `#leftcol` に従う)。破線で区切る見出し、幅いっぱいのスイッチ行、属する路線のチェック行(路線名は省略記号) |
 | 接続リスト | `.linkgroup` / `.linklist` / `.badge` | 路線ごとの「接続する駅」 |
-| ヒント | `#hint` | 左下に固定 |
+| ヒント | `#hint` | 左下に固定(`left: calc(var(--lw) + 17px)` で左サイドバーの幅に追従) |
 
 CSP: `default-src 'self'`(script/style の inline と `data:` 画像のみ許可)。
 
@@ -185,7 +197,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `side-panel.js` | 右パネル・クイック操作パネルの描画と `#side` / `#quick` のイベント |
 | `left-panel.js` | 左パネルの描画と駅の並べ替え |
 | `tabs.js` | タブ・一覧(ホーム)の描画と操作 |
-| `renderer.js` | 初期化・マウス/キー/ファイル入力・`storage` 同期・描画関数の登録 |
+| `renderer.js` | 初期化・マウス/キー/ファイル入力・`storage` 同期・**サイドバーの幅(`wireSplit`)**・描画関数の登録 |
 
 以下の5.1〜5.14 は**関数単位の説明**(行番号は分割前)。各節の置き場所は次のとおり。
 
@@ -200,7 +212,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | 5.8 描画 | `tabs.js` / `ui-state.js`(`renderTools`・`renderAll`) / `canvas.js` / `side-panel.js` / `left-panel.js` |
 | 5.9 編集操作 | 本体は `core/operations.js`。`del` と道路描画は `ui-state.js`、追加系は `renderer.js`、`setHub` は `side-panel.js` |
 | 5.10 座標・ズーム | `snapPt` / `afterAdd` は `ui-state.js`、`pt` / `applyZoom` / `setZoom` は `canvas.js` |
-| 5.11 イベント | 全体(マウス・キー・ツールバー・ファイル)は `renderer.js`、`#side` / `#quick` / `#left` / `#tabs`・`#home` は各モジュール |
+| 5.11 イベント | 全体(マウス・キー・ツールバー・ファイル・**幅ハンドル `.split`**)は `renderer.js`、`#side` / `#quick` / `#left` / `#tabs`・`#home` は各モジュール |
 | 5.12 画像のインポートと書き出し | `renderer.js` |
 | 5.13 路線図タブの管理 | `tabs.js` |
 | 5.14 別ウィンドウとの同期 | `renderer.js` |
@@ -388,6 +400,21 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `click` | `sup`/`sdown` で並べ替え(`moveStation`)、行クリックで駅を選択して `centerStation` |
 | `dragstart/over/drop/dragend` | 駅のドラッグ並べ替え(経路順の変更) |
 
+#### サイドバーの幅ハンドル `.split`(`#splleft` / `#splright`、`renderer.js` の `wireSplit()`)
+
+| 箇所 | 動作 |
+| --- | --- |
+| `pointerdown` | ドラッグ開始。`setPointerCapture` で指を外れても追従、`body` の文字選択を停止 |
+| `pointermove` | その場のドラッグ量を足し引きして `setPanelW(side, w)`(左は右へ引くと広がる、右は左へ引くと広がる) |
+| `pointerup` / `pointercancel` | ドラッグ終了 → `savePanelW()` で `localStorage('railpanelw')` に保存 |
+| `dblclick` | 既定値(`PWDEF`:左400 / 右270)へ戻して保存 |
+| `keydown` | `←`/`→`=10px(`Shift`=1px)、`Home`/`End`=最小/最大、`Enter`=既定。いずれも `preventDefault()` して保存 |
+| `window resize` | `applyPanelW()` で**記憶した幅を今の画面幅に当て直す**(保存値は変えない) |
+
+`setPanelW()` は「反対側の**実際の幅**を避けた上限」でクランプするので、ドラッグした結果がそのまま保存値になる。
+`effWidths()` はまず希望幅を当て、キャンバスが `STAGE_MIN`(200px)を下回る不足分を **左→右** の順に詰める(各最小幅は下回らない)。
+描画側は CSS 変数 `--lw` / `--rw` を読むだけで、JS に依存しない。
+
 #### タブ・一覧
 
 | 箇所 | 動作 |
@@ -432,6 +459,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | ルート(`/`) | `index.html` を返す |
 | パス | `decodeURIComponent` + `path.resolve` で**ルート外へ出ていくパスを拒否**(403) |
 | `PORT` | 環境変数 `PORT` で変更可(既定 8080) |
+| ヘッダ | `Cache-Control: no-store` — 編集直後の JS/HTML がブラウザキャッシュで古く読まれないようにする(開発用。GitHub Pages 等の公開先は各ホストの設定) |
 
 ---
 
@@ -465,3 +493,9 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
    **トグルスイッチ(`.swin`)だけは例外**で、処理は `change`(=`input` は先頭で return)に置く。表示は毎回
    データから描き直されるので、ON/OFF の値を DOM に持たせない(`#snap`/`#autosel` は `ui-state.js` の
    `snapSetting`/`autoselSetting` に保持し、`renderQuick()` がその都度 `checked` に反映する)。
+10. **左サイドバーは「駅リスト + クイック操作」の1列** — 外側のコンテナ `#leftcol` だけが幅を持ち(`--lw`)、
+    中の `#left` は残り高さをもらってスクロール、`#quick` は下端から高さ固定(`max-height:75%`)。
+    JS は `#left` / `#quick` を個別に隠さず、**ホーム画面では `#leftcol` と2つの `.split` をまとめて隠す**。
+11. **サイドバーの幅は「見たまま」が保存値** — `effWidths()`(表示幅の決定)と `setPanelW()`(ドラッグ結果の保存)が
+    同じ実効幅を使うため、ウィンドウが狭くて自動で縮んだ場合でも、保存値がその縮んだ値に上書きされることはない。
+    データ形式(`railmaps`)には一切触れない UI の設定値(`railpanelw`)だけを増やしている。

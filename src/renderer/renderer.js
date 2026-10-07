@@ -468,6 +468,93 @@ window.addEventListener('storage', e => {
   } catch (err) {}
 });
 
+/* ---------- サイドバーの幅(ドラッグで変更・localStorage に記憶) ----------
+   左 = 「駅リスト + クイック操作」を統合した #leftcol、右 = #side。
+   幅は CSS 変数 --lw / --rw で渡す(描画側は JS に依存しない)。ドラッグ以外に
+   キーボード(←/→=10px、Shift=1px、Home/End=最小/最大、Enter=既定)でも変えられる。 */
+const PWKEY = 'railpanelw', PWDEF = { left: 400, right: 270 };
+const PWRANGE = { left: [260, 640], right: [220, 560] };
+const STAGE_MIN = 200;   // キャンバスに最低限残す幅
+const pw = (() => {
+  let v = {};
+  try { v = JSON.parse(localStorage.getItem(PWKEY)) || {}; } catch (e) { v = {}; }
+  const fix = s => {
+    const n = Math.round(+v[s]);
+    return Number.isFinite(n) ? Math.max(PWRANGE[s][0], Math.min(PWRANGE[s][1], n)) : PWDEF[s];
+  };
+  return { left: fix('left'), right: fix('right') };
+})();
+// 画面幅から実際に表示する幅を決める。まず希望幅を当て、キャンバスが STAGE_MIN を下回るなら
+// 不足分を左→右の順に詰める(最小幅は下回らない)。ウィンドウが狭いと自動で両サイドが狭まる。
+function effWidths() {
+  const inner = window.innerWidth;
+  const pick = (v, r) => Math.max(r[0], Math.min(r[1], Math.round(v)));
+  let L = pick(pw.left, PWRANGE.left), R = pick(pw.right, PWRANGE.right);
+  let need = L + R + 14 + STAGE_MIN - inner;   // キャンバスを確保できない不足分
+  if (need > 0) { const c = Math.min(need, L - PWRANGE.left[0]); L -= c; need -= c; }
+  if (need > 0) { const c = Math.min(need, R - PWRANGE.right[0]); R -= c; }
+  return { left: L, right: R };
+}
+function applyPanelW() {
+  const e = effWidths();
+  document.documentElement.style.setProperty('--lw', e.left + 'px');
+  document.documentElement.style.setProperty('--rw', e.right + 'px');
+}
+function setPanelW(side, w) {
+  // 反対側の「実際の幅」を避けたうえで、そのサイドの上限までしか動かさない(見たまま保存する)
+  const e = effWidths();
+  const other = side === 'left' ? e.right : e.left;
+  const hi = Math.max(PWRANGE[side][0],
+                      Math.min(PWRANGE[side][1], window.innerWidth - other - 14 - STAGE_MIN));
+  pw[side] = Math.max(PWRANGE[side][0], Math.min(hi, Math.round(w)));
+  applyPanelW();
+}
+function savePanelW() { try { localStorage.setItem(PWKEY, JSON.stringify(pw)); } catch (e) {} }
+applyPanelW();
+// ウィンドウの大きさが変わったら、記憶した幅を今の画面幅に合わせて当て直す(記憶した値自体は変えない)
+window.addEventListener('resize', applyPanelW);
+
+function wireSplit(id, side) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  let startX = 0, startW = 0, dragging = false;
+  el.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    dragging = true; startX = e.clientX; startW = pw[side];
+    el.setPointerCapture(e.pointerId);
+    el.classList.add('drag');
+    document.body.style.userSelect = 'none';   // ドラッグ中のテキスト選択を止める
+    e.preventDefault();
+  });
+  el.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    setPanelW(side, startW + (side === 'left' ? e.clientX - startX : startX - e.clientX));
+  });
+  const end = e => {
+    if (!dragging) return;
+    dragging = false;
+    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    el.classList.remove('drag');
+    document.body.style.userSelect = '';
+    savePanelW();
+  };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+  el.addEventListener('dblclick', () => { setPanelW(side, PWDEF[side]); savePanelW(); });   // 既定値へ戻す
+  el.addEventListener('keydown', e => {
+    const cur = pw[side], d = e.key === 'ArrowLeft' ? -10 : e.key === 'ArrowRight' ? 10 : null;
+    if (d) setPanelW(side, cur + (side === 'left' ? d : -d));
+    else if (e.key === 'Home') setPanelW(side, PWRANGE[side][0]);
+    else if (e.key === 'End') setPanelW(side, PWRANGE[side][1]);
+    else if (e.key === 'Enter') setPanelW(side, PWDEF[side]);
+    else return;
+    e.preventDefault();
+    savePanelW();
+  });
+}
+wireSplit('splleft', 'left');
+wireSplit('splright', 'right');
+
 /* 各モジュールの描画関数を登録してから最初の描画(登録は renderAll より前に行う) */
 setRender({ tabs: renderTabs, home: renderHome, canvas: renderCanvas, side: renderSide, left: renderLeft });
 renderAll();

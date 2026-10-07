@@ -35,7 +35,11 @@ http.createServer((req, res) => {
   if (file !== ROOT && !file.startsWith(ROOT + path.sep)) { res.writeHead(403).end('Forbidden'); return; }
   fs.readFile(file, (err, buf) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('404 Not Found'); return; }
-    res.writeHead(200, { 'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream' });
+    res.writeHead(200, {
+      'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream',
+      // 開発用: 編集直後の JS/HTML がキャッシュで古く読まれないようにする(GitHub Pages 側は各ホストの設定)
+      'Cache-Control': 'no-store'
+    });
     res.end(buf);
   });
 }).listen(PORT, () => {

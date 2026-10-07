@@ -172,8 +172,10 @@ export function renderAll() {
   const home = ui.home;
   document.getElementById('stage').style.display = home ? 'none' : '';
   document.getElementById('side').style.display = home ? 'none' : '';
-  document.getElementById('left').style.display = home ? 'none' : '';
-  document.getElementById('quick').style.display = home ? 'none' : '';
+  // 左サイドバーは「駅リスト(#left)+クイック操作(#quick)」を統合した1列なので、まとめて隠す
+  document.getElementById('leftcol').style.display = home ? 'none' : '';
+  document.getElementById('splleft').style.display = home ? 'none' : '';
+  document.getElementById('splright').style.display = home ? 'none' : '';
   document.getElementById('tools').style.display = home ? 'none' : '';
   document.getElementById('hint').style.display = home ? 'none' : '';
   document.getElementById('home').style.display = home ? 'block' : 'none';

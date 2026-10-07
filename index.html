@@ -40,9 +40,19 @@
   #stage { flex:1; overflow:auto; background:var(--paper); }
   #cv { display:block; user-select:none; }
   aside { width:270px; border-left:1px solid var(--rule); background:#fff; padding:12px; overflow:auto; }
-  #left { border-left:0; border-right:1px solid var(--rule); }
-  /* クイック操作パネル(左パネルの右横)。よく使うON/OFFトグルと路線の追加を並べておく */
-  #quick { width:182px; border-left:0; border-right:1px solid var(--rule); }
+  /* 左サイドバー(統合): 上=選択中の路線の駅リスト(ここだけがスクロール) / 下=クイック操作(高さ固定)。
+     幅は #splleft をドラッグで変えられる(--lw に保存) */
+  #leftcol { flex:0 0 auto; width:var(--lw, 400px); display:flex; flex-direction:column;
+             min-height:0; overflow:hidden; background:#fff; }
+  #leftcol > aside { width:auto; border-left:0; }
+  #left { flex:1 1 auto; min-height:0; }                        /* 残り高さをもらってスクロール */
+  #quick { flex:0 0 auto; max-height:75%; border-top:1px solid var(--rule); }  /* 下から高さ固定 */
+  /* サイドバーの幅をドラッグで変えるハンドル(#splleft=左 / #splright=右) */
+  .split { position:relative; flex:0 0 7px; background:#fff; cursor:col-resize; }
+  .split::after { content:""; position:absolute; top:0; bottom:0; left:2px; width:2px; background:var(--rule); }
+  .split:hover::after, .split.drag::after { background:var(--signal); }
+  .split:focus-visible { outline:2px solid var(--signal); outline-offset:-2px; }
+  #side { border-left:0; width:var(--rw, 270px); }
   #quick h3 { margin:14px 0 7px; font-size:12.5px; border-top:1px dashed var(--rule); padding-top:11px; }
   #quick h3:first-child { margin-top:0; border-top:0; padding-top:0; }
   #quick > button { display:block; width:100%; margin-bottom:7px; }
@@ -126,7 +136,7 @@
   .linklist li.on { border-color:#2f7d64; background:#eaf5f1; }
   .linklist .badge { flex:none; font-size:10px; font-weight:700; color:#2f7d64; background:#e3efe9; border-radius:3px; padding:1px 5px; }
   .linklist svg { flex:none; }
-  #hint { position:fixed; left:464px; bottom:10px; background:var(--ink); color:#fff; padding:6px 12px; border-radius:5px; font-size:12px; pointer-events:none; }
+  #hint { position:fixed; left:calc(var(--lw, 400px) + 17px); bottom:10px; background:var(--ink); color:#fff; padding:6px 12px; border-radius:5px; font-size:12px; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -155,9 +165,15 @@
   </div>
 </header>
 <main>
-  <aside id="left"></aside>
-  <aside id="quick"></aside>
+  <div id="leftcol">
+    <aside id="left"></aside>
+    <aside id="quick"></aside>
+  </div>
+  <div class="split" id="splleft" role="separator" aria-orientation="vertical" tabindex="0"
+       aria-label="左サイドバーの幅" title="ドラッグで左サイドバーの幅を変更(ダブルクリックで既定値)"></div>
   <div id="stage"><svg id="cv" width="2400" height="1600" viewBox="0 0 2400 1600"></svg></div>
+  <div class="split" id="splright" role="separator" aria-orientation="vertical" tabindex="0"
+       aria-label="右サイドバーの幅" title="ドラッグで右サイドバーの幅を変更(ダブルクリックで既定値)"></div>
   <aside id="side"></aside>
   <div id="home"></div>
 </main>
