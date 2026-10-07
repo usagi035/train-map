@@ -4,6 +4,7 @@
    =========================================================================== */
 import { S, G, mw, mh, clamp, mkMap, findStationIn, linesOfIn, lw, isDark, BG, SHAPES } from '../core/model.js';
 import { dist } from '../core/geometry.js';
+import { LIMITS } from '../core/sanitize.js';
 import { core, ui, replaceUi, esc, curMap, curLine, findStation, linesOf, viewNow, updateUndoButtons,
          setRender,
          save, getBulk, clearBulk, rectOf, pickInBox, isStationLocked, hitLocked, lineEditBlocked,
@@ -362,6 +363,11 @@ document.getElementById('tools').addEventListener('click', e => {
 });
 document.getElementById('file').addEventListener('change', e => {
   const f = e.target.files[0]; if (!f) return;
+  // 読む前に大きさを断つ(大きいJSONでフリーズさせない。S6)
+  if (f.size > LIMITS.jsonFileBytes) {
+    alert('JSONファイルが大きすぎます(上限10MB)。このアプリで書き出したJSONを選んでください。');
+    e.target.value = ''; return;
+  }
   const r = new FileReader();
   r.onload = () => {
     try {
@@ -382,9 +388,22 @@ function checkQuota() {
   if (core.snapshot().length > 4500000) alert('画像の取り込みで保存領域の上限に近づいています。\n保存に失敗する場合は、画像を小さくするか削除してください。');
 }
 // 画像ファイルを読み込んでキャンバスに配置。大きい画像は縮小してdata URLに畳む(localStorage対策)
+// `accept="image/*"` は見た目で何も強制しないので、型・大きさ・解像度はすべてここで確かめる(S6)。
+// SVG は取り込めない: 保存側の許可リスト(S1: png/jpeg/webp/gif)に無いため、
+// 入れても再読込のときに画像ごと捨てられ、ユーザーのデータが消えるため。
+const IMG_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
 function importImageFile(file, replaceId) {
   if (!file) return;
-  if (file.type && file.type.indexOf('image/') !== 0) { alert('画像ファイル(PNG・JPG・GIF・WebPなど)を選んでください。'); return; }
+  if (!file.type || IMG_TYPES.indexOf(file.type) < 0) {
+    alert(file.type === 'image/svg+xml'
+      ? 'SVG画像は取り込めません。PNG・JPG・GIF・WebPのいずれかに変換してから読み込んでください。'
+      : '画像ファイル(PNG・JPG・GIF・WebP)を選んでください。');
+    return;
+  }
+  if (file.size > LIMITS.imageFileBytes) {
+    alert('画像ファイルが大きすぎます(上限15MB)。小さくしてから読み込んでください。');
+    return;
+  }
   const rd = new FileReader();
   rd.onerror = () => alert('画像を読み込めませんでした。');
   rd.onload = () => {
@@ -393,6 +412,11 @@ function importImageFile(file, replaceId) {
     im.onload = () => {
       const m = curMap(), MAX = 1600;
       const nw = im.naturalWidth || 100, nh = im.naturalHeight || 100;
+      // 解像度の上限は canvas に描く前(= メモリを食う処理の前)に確かめる(S6)
+      if (nw * nh > LIMITS.imagePixels) {
+        alert('画像の解像度が高すぎます(上限5000万画素)。小さくしてから読み込んでください。');
+        return;
+      }
       let src = rd.result;
       const scale = Math.min(1, MAX / Math.max(nw, nh));
       if (scale < 1 || file.size > 400 * 1024) {   // 多くの場合は縮小して再エンコード(WebP不可の環境ではPNG)

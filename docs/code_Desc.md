@@ -57,7 +57,7 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
 | `src/core/model.js` | 状態 `S` の読み書き・ID(`newId`)・定数(COLORS/G/SHAPES/…)・各オブジェクト生成・接続の掃除 |
 | `src/core/geometry.js` | 距離・区間・環状線の計算(`dist` / `project` / `keepCrossings` など) |
 | `src/core/migration.js` | 旧形式のデータを新形式へ変換する `migrate()` |
-| `src/core/sanitize.js` | **読み込むJSONの検証と修復** `sanitizeDocument(raw)` → `{doc, warnings}`。白名单で作り直し、不正な色・数値・ID・画像は既定へ(§8 注12) |
+| `src/core/sanitize.js` | **読み込むJSONの検証と修復** `sanitizeDocument(raw)` → `{doc, warnings}`。白名单で作り直し、不正な色・数値・ID・画像は既定へ(§8 注12)。**読むファイルの上限もここに集める**(`LIMITS.jsonFileBytes` 10MB / `imageFileBytes` 15MB / `imagePixels` 50MP = S6) |
 | `src/core/history.js` | Undo/Redo のスナップ管理(`init` / `push` / `undo` / `redo`) |
 | `src/core/operations.js` | 追加・削除・移動などの操作と `createCore()`。**画面側が core に触れる唯一の入口** |
 | `src/renderer/ui-state.js` | 画面側の共通状態・共通操作(`ui` / `save` / `renderAll` / □選択 / レイヤー判定 / 道路描画 / 削除)。**他の画面モジュールはここからのみ import する** |
@@ -391,7 +391,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | 箇所 | 動作 |
 | --- | --- |
 | `#tools click` | ツール切替(道路描画中は先に確定)、`#del` 削除、`#undo`/`#redo`、ズーム(#zin/#zout/#zreset)、`#imp`→JSON読込ダイアログ、`#addimg`→画像ダイアログ、`#exp`→**JSON書き出し**、`#expimg`→PNG書き出し。※ ボタンは `blur()` して Enter/Space の誤爆を防止 |
-| `#file change` | JSON を parse → `maps`/`lines` の形を検証 → `migrate()` → `ui` を初期化 → `save()`。ダメなら alert |
+| `#file change` | **10MB を超えたら読む前に中止**(S6)→ JSON を parse → `sanitizeDocument()` → `migrate()` → `ui` を初期化 → `save()`。直せない文書なら alert |
 | `#imgfile change` | `importImageFile(file, imgReplaceId)` を呼んで即クリア |
 
 #### 右パネル `#side` / クイック操作パネル `#quick`
@@ -444,7 +444,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | 関数 | 動作 |
 | --- | --- |
 | `checkQuota()` | スナップが4.5MBを超えたら「上限に近づいている」alert |
-| `importImageFile(file, replaceId)` | 画像判定 → FileReader → Image。**最長辺1600px に縮小**(または400KB超)して canvas から `image/webp` 0.85(WebP非対応環境はPNG)に再エンコード → `replaceId` あれば差し替え(位置・大きさはそのまま)、無ければ**表示中画面の中央に 最長辺900px で配置**。`show.img = true` に復帰、`ensureRoom`、`checkQuota()` |
+| `importImageFile(file, replaceId)` | **型の許可リスト(png/jpeg/webp/gif)・15MB・5000万画素を、読む前/デコード前/canvasへ描く前に検査**(S6。`accept` 属性は強制しないのでコードで見る。**SVG は専用のメッセージで拒否**) → FileReader → Image。**最長辺1600px に縮小**(または400KB超)して canvas から `image/webp` 0.85(WebP非対応環境はPNG)に再エンコード → `replaceId` あれば差し替え(位置・大きさはそのまま)、無ければ**表示中画面の中央に 最長辺900px で配置**。`show.img = true` に復帰、`ensureRoom`、`checkQuota()` |
 | `persistOpen()` | `train-map:v1:open` へ開いているタブを保存(hash 付き=別ウィンドウでは保存しない) |
 | `exportImage()` | SVG を serialize → base64 → Image → canvas に背景色ごと描画 → **PNG をダウンロード** |
 

@@ -14,6 +14,11 @@ export const LIMITS = {
   maps: 50, linesPerMap: 100, stationsPerLine: 500, crossingsPerLine: 500,
   hubs: 500, roads: 200, roadPts: 1000, stops: 1000, boxes: 500, images: 30,
   nameLen: 100, textLen: 200, canvasMax: 20000, imageDataUrlBytes: 3_000_000,
+  // 読み込む**ファイル**の上限(S6)。読む前(または canvas に描く前)に弾き、
+  // メモリを食う処理そのものを始めないための値。
+  jsonFileBytes: 10_000_000,     // JSON 10MB: readAsText の前
+  imageFileBytes: 15_000_000,    // 画像15MB: デコード(readAsDataURL)の前
+  imagePixels: 50_000_000,       // 50メガピクセル: canvas へ drawImage の前
 };
 
 /* ---------- 型ごとの検証ヘルパ(すべて「直す」方向に倒す) ---------- */
