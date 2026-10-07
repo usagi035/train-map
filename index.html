@@ -39,6 +39,10 @@
   #tools .sp { flex:1; }
   /* グループの区切りと、ショートカット一覧のポップアップ(U3) */
   #tools .sep { flex:none; width:1px; align-self:stretch; margin:3px 4px; background:#c3cecb; }
+  /* 自動保存の状態(U7)。赤は S5 のバナーと同じ色、緑は右パネルの見出しと同じ色(白地で 5.9:1 = AA) */
+  #saveind { flex:none; font-size:12px; font-weight:700; color:#1f6b4c; white-space:nowrap; padding:0 4px; }
+  #saveind[data-state="saving"] { color:#52636c; font-weight:400; }
+  #saveind[data-state="failed"] { color:#8a2b1c; }
   #keyshelp { font-weight:700; }
   #keyspop { position:absolute; right:8px; top:100%; z-index:96; max-width:min(440px, calc(100vw - 16px));
              background:#fff; color:var(--ink); border:1px solid #b9c4c1; border-radius:8px;
@@ -163,6 +167,11 @@
   .secn { flex:none; max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:700; color:#5c6f77; background:#fff; border:1px solid #cfdbd7; border-radius:9px; padding:0 7px; }
   .seci { flex:none; font-size:10px; color:#6b7c84; transform:rotate(-90deg); transition:transform .15s; }
   .sec.open > .sech .seci { transform:rotate(0deg); }
+  /* 動きを減らす設定に従う(U7):アコーディオンの矢印と、クイック操作パネルのスイッチの動きを止める。
+     ダークテーマは入れない(今回の指示書で禁じられている)。 */
+  @media (prefers-reduced-motion: reduce) {
+    .seci, #quick .qsw .track, #quick .qsw .track::after { transition:none; }
+  }
   .secb { padding:9px; border-top:1px solid #dde6e3; }
   .secb h3 { margin:0 0 6px; font-size:12.5px; }
   .subh { font-size:12px; font-weight:700; color:#3d5058; margin:12px 0 6px; padding-top:9px; border-top:1px dashed #dbe4e1; }
@@ -253,6 +262,8 @@
       </div>
     </div>
     <span class="sep" aria-hidden="true"></span>
+    <!-- 自動保存の状態(U7): 保存中…(保留あり)/ 保存済み / 保存に失敗。失敗の知らせ自体は S5 のバナーが担う -->
+    <span id="saveind" data-state="saved" title="自動保存の状態(失敗すると赤くなります)">保存済み ✓</span>
     <button id="keyshelp" title="ショートカットの一覧" aria-expanded="false" aria-controls="keyspop">?</button>
     <div id="keyspop" hidden>
       <h3>ショートカット</h3>

@@ -5,7 +5,7 @@
 import { S, allStations } from '../core/model.js';
 import { core, ui, esc, idf, curMap, viewNow, save, renderAll, mapUpdated, touchMap, forgetMap } from './ui-state.js';
 import { LIMITS } from '../core/sanitize.js';
-import { KEYS } from './storage.js';
+import { KEYS, forgetMapView, mapView, saveMapView } from './storage.js';
 import { toast } from './toast.js';
 
 export function renderTabs() {
@@ -61,12 +61,15 @@ let trashed = null;   // { map, index, dropId, wasOpen }
 
 export function deleteMap(id) {
   const gone = S.maps.find(x => x.id === id);
+  // 消す路線図の「見かけの位置」もメモしておく(U7)。取り消しで元の位置に戻せるようにする
+  const view = mapView(id);
   trashed = gone ? { map: JSON.parse(JSON.stringify(gone)), index: S.maps.indexOf(gone),
-                     dropId: null, wasOpen: ui.open.includes(id) } : null;
+                     dropId: null, wasOpen: ui.open.includes(id), view } : null;
   const dropId = core.deleteMap(id);   // 最後の1つを消したときは代わりに作られた路線図のID
   if (trashed) trashed.dropId = dropId;
   save(id);                     // 表示を切り替える前に履歴へ(削除前の路線図に戻せるように)
   forgetMap(id);                // 消した路線図の最終更新も消す(U5)
+  forgetMapView(id);            // 覚えていたズーム・スクロールも消す(U7)
   if (dropId) touchMap(dropId); // 代わりに作った路線図にも記録を付ける
   ui.open = ui.open.filter(x => x !== id);
   if (ui.map === id) {
@@ -83,6 +86,7 @@ function restoreDeleted() {
   if (!trashed) return;
   const t = trashed; trashed = null;
   if (!core.restoreMap(t.map, t.index, t.dropId)) return;
+  if (t.view) saveMapView(t.map.id, t.view.z, t.view.l, t.view.t);   // 見かけの位置も戻す(U7)
   save(t.map.id);   // 復元した路線図の最終更新として記録する(U5)
   if (t.wasOpen) openMap(t.map.id); else { persistOpen(); renderAll(); }
 }

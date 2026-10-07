@@ -119,8 +119,10 @@ let ui = { map, line, sel, tool, open, home, zoom, drawing, bulk, bulkRect, bulk
 | 矢印キーでの移動 / Tab での選択巡回(U4) | `renderer.js` の `window keydown` → `nudge()` / `cycleSel()`。**`core.*` を呼ぶだけで直接代入はしない**、変更は `deferSave()` でまとめて1回の履歴へ。移動するのは `ui.sel`(□選択のまとめは移動しない)。読み上げ(`announceStatus`)は状態を変えない |
 | 一覧の複製 / 名前変更 / 削除の記録(U5) | `tabs.js` の `duplicateMap()` / `startRename()` / `deleteMap()` → **`core.duplicateMap()` / `core.renameMap()` を呼ぶだけ**(直接代入なし)。`save(変わったID)` を渡して履歴と**最終更新**(`KEYS.updated` = **文書本体には足さない**)を記録し、削除は `forgetMap()`。名前変更は `prompt` なし = その行だけ `<input>` に入れ替え(Enter / blur で確定、Esc で中止)、一覧ごとではなく変更した所だけ描き直す |
 | 空状態の案内とサンプルの読み込み(U5) | `renderCanvas()` が `blankMap(m)` で `#empty` の出し入れ(**表示の出し入れだけ**)、空のあいだは `#stage` のスクロールを戻す。`#loadsample` click → `core.loadSample(いま開いているID)` → `ui.line` を選び直し → `save(同じID)`。サンプルは `src/core/sample.js`、**`sanitizeDocument()` 通過を S1 のテストで保証** |
+| 路線図ごとのズーム・スクロール(U7) | **読み**: `renderCanvas()` が「路線図が切り替わった最初の描画」で `mapView()` を読んで `ui.zoom` と `#stage` のスクロールを戻す(覚えが無ければ 100%・原点)。**書き**: `setZoom()`・`#stage` の `scroll`(300ms まとめ)・`pagehide` → `saveMapView()`(**一覧画面のあいだは書かない** = 隠れている間は位置を読めず、ズームも前の地図のまま)。削除は `forgetMapView()`、取り消しで戻す。**すべて `KEYS.view` に書くだけ = 文書本体(`KEYS.maps`)には足さず、書き出しの JSON は変わらない。`core.*` を呼ばない(表示だけ)** |
+| ヘッダーの保存表示(U7) | `#saveind` ← `setSavePending()`(`deferSave()` で「保存中…」/ `save()` で解除)+ `setSaveFailed()`(S5 の赤バナーと同じ切り替えで「保存に失敗」)。**表示だけで文書は変えない**。文言は日本語のまま(i18n は入れない)、失敗の読み上げは S5 のバナーに任せて live region は付けない。動きを減らす設定も `index.html` の CSS(`@media (prefers-reduced-motion: reduce)`)だけで済ませ、**ダークテーマは足さない** |
 
-**洗い出しの結果: 状態を変える箇所は上記の3グループ(キャンバス pointerdown/pointermove・編集関数・パネルの input/change/click)に集約されている。** 全数を列挙可能であり、`dispatch` への付け替えは機械的に進められる。**キーボード経由の操作(U4)と、一覧・空状態の操作(U5)も同じく `core.*` と `save(変わったID)` を通るだけなので、状態を書き換える経路は増えていない。**
+**洗い出しの結果: 状態を変える箇所は上記の3グループ(キャンバス pointerdown/pointermove・編集関数・パネルの input/change/click)に集約されている。** 全数を列挙可能であり、`dispatch` への付け替えは機械的に進められる。**キーボード経由の操作(U4)と、一覧・空状態の操作(U5)も同じく `core.*` と `save(変わったID)` を通るだけなので、状態を書き換える経路は増えていない。書き出し(U6)はクローンだけを書き換え、**見かけの位置・保存の表示・動きを減らす設定(U7)はいずれも「読む/表示する」だけで `core.*` を呼ばない**ため、やはり増えていない。**
 
 ## 5. ID の付け方
 

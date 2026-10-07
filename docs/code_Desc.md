@@ -35,6 +35,7 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
 | `train-map:v1:acc` | 右パネル各グループの開閉状態(クイック操作パネル `#quick` は開閉を持たないため対象外) | `saveAcc()` |
 | `train-map:v1:panelw` | 左右サイドバーの幅 `{left, right}`(px)。ドラッグ・キーボード・ダブルクリックで変更 | `savePanelW()`(`renderer.js`) |
 | `train-map:v1:updated` | **路線図ごとの最終更新時刻** `{ [mapId]: ms }`(U5)。**文書本体には足さない** = 書き出しの JSON 形式を変えないため別のキーへ持つ。旧キーの移行対象は無い | `touchMap()` / `forgetMap()` / `stampMissing()`(`ui-state.js`) |
+| `train-map:v1:view` | **路線図ごとのズームとスクロール位置** `{ [mapId]: {z, l, t} }`(U7)。**文書本体には足さない** = 書き出しの JSON 形式を変えないため、最終更新と同じく別のキーへ持つ。表示だけの情報なので、読めなくても書けなくても握りつぶす | `mapView()` / `saveMapView()` / `forgetMapView()`(`storage.js`) |
 
 > **旧キーからの移行(S3)**: 移行前の `railmaps` / `railopen` / `railacc` / `railpanelw` は起動時に
 > `migrateLegacyKeys()` が「新キーが無くて旧キーにだけある」場合に限り読み取って新キーへ移す。
@@ -62,10 +63,10 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
 | `src/core/history.js` | Undo/Redo のスナップ管理(`init` / `push` / `undo` / `redo`) |
 | `src/core/operations.js` | 追加・削除・移動などの操作と `createCore()`。**画面側が core に触れる唯一の入口** |
 | `src/renderer/ui-state.js` | 画面側の共通状態・共通操作(`ui` / `save` / `renderAll` / □選択 / レイヤー判定 / 道路描画 / 削除)。**他の画面モジュールはここからのみ import する** |
-| `src/renderer/storage.js` | localStorage のキー一覧(`NS` / `KEYS`)と旧キーからの移行 `migrateLegacyKeys()`(§2、S3) |
+| `src/renderer/storage.js` | localStorage のキー一覧(`NS` / `KEYS`)と旧キーからの移行 `migrateLegacyKeys()`(§2、S3)。**路線図ごとのズーム・スクロール位置の読み書き** `mapView()` / `saveMapView()` / `forgetMapView()` もここ(U7。表示だけの情報なので、読めなくても書けなくても失敗としては扱わない) |
 | `src/renderer/banner.js` | 非ブロッキングの案内バナー(`setBanner` / `clearBanner` / `hasBanner`)。S4=タブ間競合、S5=自動保存失敗で使う |
 | `src/renderer/toast.js` | 一時的な知らせ(`toast(text, { ms = 5000, actions, key, cls })` / `dismiss` / `dismissToast` / `toastCount` / `hasToast`)。`role="status"` `aria-live="polite"`、既定5秒で自動消滅、対応ボタンは任意、`key` を付けると同じ知らせは1枚。**U2: `alert()` / `confirm()` の代わり**(ロック解除・削除の取り消し8秒・取り込み結果と失敗理由・画像の失敗)。右上の1枚(`#toasts`) |
-| `src/renderer/canvas.js` | SVG の描画(`renderCanvas`)とズーム・スクロール(`pt` / `applyZoom` / `setZoom` / `centerStation`) |
+| `src/renderer/canvas.js` | SVG の描画(`renderCanvas`)とズーム・スクロール(`pt` / `applyZoom` / `setZoom` / `centerStation`)。**路線図ごとのズーム・位置の戻しと記憶**(`viewMapId` / `saveViewNow` = U7) |
 | `src/renderer/side-panel.js` | 右パネルの描画(`renderSide` / `sec`)と、左のクイック操作パネル(`renderQuick`)。イベントは `#side` と `#quick` の両方へ登録 |
 | `src/renderer/left-panel.js` | 左パネルの描画(`renderLeft` / `stationGlyph`)と駅の並べ替え |
 | `src/renderer/tabs.js` | タブと一覧(ホーム)の描画・操作(`renderTabs` / `renderHome` / `openMap` / `closeTab` / `newMap` / `deleteMap` / `duplicateMap` / `startRename` = U5) |
@@ -150,7 +151,7 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
                                 [選択] | [追加: data-tool 群 +#addimg] |
                                 [#del #undo #redo] | `.sp`(余白) | [ズーム #zout #zlabel #zin #zreset] |
                                 [#exp #imp #expimg → #exppop 書き出し設定(倍率・透過・PNG/SVG = U6)] |
-                                [? #keyshelp → #keyspop 一覧]、
+                                #saveind(自動保存の状態 = U7) | [? #keyshelp → #keyspop 一覧]、
                                 非表示の #file(JSON) と #imgfile(画像)
 <main>
   <div id="leftcol">         … 左サイドバー(1列に統合)
@@ -194,6 +195,8 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 | 一覧画面 | `#home li` / `.st` / `.meta` / `input.hname` | 路線図リスト(1行に名前・状態・4ボタン、**1行目に件数と最終更新 `.meta`**、名前変更は行の中だけ入力欄へ差し替える = U5) |
 | 空状態の案内 | `#empty` / `#empty[hidden]` / `#empty button` | キャンバス中央に出す案内(U5)。本文は `pointer-events:none`・`user-select:none`、色は注記と同じ `#52636c`(`--paper` 上 5.7:1 = AA)。`display:flex` が `[hidden]` より強いので `#empty[hidden]{display:none}` で消す |
 | 画像書き出しの設定 | `#exppop` / `#exppop[hidden]` / `fieldset` / `.expbtns` | 「画像書き出し」の下に開く設定(U6)。置き場所は `#keyspop` と同じ(ツールバー右寄せ・`position:absolute; top:100%`)。倍率ラジオ(1×/2×/3×)・透過チェック・PNG/SVG ボタン |
+| 自動保存の状態 | `#saveind` / `#saveind[data-state=…]` | ツールバー右端の3表示(U7)。既定 = 緑の「保存済み ✓」(`#1f6b4c` = 右パネル見出しの緑)、「保存中…」= 灰(`#52636c`)、「保存に失敗」= 赤(`#8a2b1c` = S5 バナーと同じ)。**3色とも `--paper` 上で AA(4.5:1)以上** = テストで自動計算 |
+| 動きを減らす設定 | `@media (prefers-reduced-motion: reduce)` | アコーディオンの矢印 `.seci` と、クイック操作パネルのスイッチ(`.qsw .track` / `::after`)の `transition` を切る(U7)。**ダークテーマは足さない**(指示書で禁じられているため、`prefers-color-scheme` は1つも無い) |
 | パネル共通 | `aside label` / `.row` / `.note` | ラベル・横並び行・補足文 |
 | 左右リスト | `#lines` `#roadlist` `#imglist` `.linklist` | 行・選択 `.on`・ハンドル `.lhandle` |
 | レイヤー操作 | `#lines .lyr` / `.lyr:disabled` / `#lines li.off` | 👁🔒↑↓ ボタン、非表示行の薄表示 |
@@ -294,12 +297,13 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `snapStr()` | `JSON.stringify(S)`(失敗時は空文字) |
 | `viewNow()` / `syncView()` | 表示中の路線図・路線を記録(undo で開き直すため) |
 | `updateUndoButtons()` | ツールバーの ↶/↷ を有効/無効化 |
-| **`save(changedId?)`** | ①変化が無ければ何もしない ②**変更前のスナップを `undoStack` に積む**(上限50、`redoStack` はクリア) ③`localStorage('train-map:v1:maps')` へ書く。**失敗時は黙らず `setSaveFailed(true)`**(常駐の赤バナー + `beforeunload`。成功で解除 = S5) ④書けた変更だけ `touchMap()` で**最終更新を記録**(U5。`changedId` は「どの路線図が変わったか」= 追加・複製・名前変更・取り込みなどで `ui.map` 以外が変わったときに指定) ⑤Undoボタン更新 |
-| `deferSave()` | 600ms 後に `save()`。文字入力・スライダーの連続操作を**1履歴にまとめる** |
+| **`save(changedId?)`** | ①**保留を下げる**(`setSavePending(false)` = ヘッダーの表示を「保存済み」へ = U7)→ 変化が無ければ何もしない ②**変更前のスナップを `undoStack` に積む**(上限50、`redoStack` はクリア) ③`localStorage('train-map:v1:maps')` へ書く。**失敗時は黙らず `setSaveFailed(true)`**(常駐の赤バナー + `beforeunload`。成功で解除 = S5) ④書けた変更だけ `touchMap()` で**最終更新を記録**(U5。`changedId` は「どの路線図が変わったか」= 追加・複製・名前変更・取り込みなどで `ui.map` 以外が変わったときに指定) ⑤Undoボタン更新 |
+| `deferSave()` | 600ms 後に `save()`。文字入力・スライダーの連続操作を**1履歴にまとめる**。**そのあいだは「保存中…」を出す**(`setSavePending(true)` = U7) |
 | `touchMap(id)` / `mapUpdated(id)` / `forgetMap(id)` / `stampMissing()` | **路線図ごとの最終更新(U5)**。値は `KEYS.updated`(`train-map:v1:updated`)= **文書本体には足さない**。読み込みは初回 access のとき(lazy、node テストでは localStorage が無くても動く)。`stampMissing()` は起動時に日時の無い路線図へ「記録開始」の時刻を付ける(無くすると一覧の日時が空欄)。表示用のため書き込み失敗は握りつぶす |
 | `applySnap(e)` | スナップ文字列 `S` に差し替え、localStorage へ書く(**書けなければ `save()` と同じ失敗の知らせ**=S5)、開いているタブ/路線を有効な範囲に補正、選択と□選択を解除して `renderAll()` |
 | `undo()` / `redo()` | **道路の描画中は履歴ではなく「頂点を1つ戻す」**(0個なら中止)。それ以外はスナップを差し替える |
-| `setSaveFailed(on)` / `isSaveFailed()` | **保存失敗の状態と知らせ**(S5)。`true` = 赤い常駐バナー(「書き出し」付き)+ `beforeunload` を張る。次の保存が成功したら全部下ろす。起動時の旧キー移行で書けなかった場合も同じ経路 |
+| `setSaveFailed(on)` / `isSaveFailed()` | **保存失敗の状態と知らせ**(S5)。`true` = 赤い常駐バナー(「書き出し」付き)+ `beforeunload` を張る。次の保存が成功したら全部下ろす。起動時の旧キー移行で書けなかった場合も同じ経路。**ヘッダーの表示(`#saveind`)も同じときに切り替える**(U7) |
+| `setSavePending(on)` / `renderSaveInd()` | **ヘッダーの保存表示**(U7)。「保存中…(保留あり)/ 保存済み ✓ / 保存に失敗」の3つを `#saveind` に出す。**失敗なら常に「保存に失敗」を優先**(失敗中に次の入力が来ても隠さない)。文言は画面の他の部分と同じ日本語(i18n は入れない)。**live region にはしない** = 失敗の読み上げは S5 のバナーが担い、保存のたびに読み上げると邪魔なため |
 
 ### 5.5 幾何(L216〜251)
 
@@ -382,7 +386,9 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `snapOn()` / `autoselOn()`<br>`setSnap(v)` / `setAutosel(v)` | クイック操作パネルの2つのスイッチの状態。**画面だけの状態(セッション中有効・保存しない)**。DOM ではなく `ui-state.js` のモジュール変数に持つ(パネルは再描画されるため) |
 | `snapCx(l, r)` | 踏切の位置をグリッド点へ合わせて再計算(`seg`/`t` を返す) |
 | `applyZoom()` | SVG の `width/height/viewBox` とズームラベル(%)を更新 |
-| `setZoom(z, cx, cy)` | 0.25〜3に丸め、**指定した画面位置を固定したまま倍率変更** |
+| `setZoom(z, cx, cy)` | 0.25〜3に丸め、**指定した画面位置を固定したまま倍率変更**。変えたら**その路線図の位置を覚える**(U7) |
+| **`renderCanvas()` の位置戻し** | **路線図が切り替わった最初の描画でだけ**(`viewMapId !== ui.map`)、`mapView()` を読んでズームとスクロールを戻す(U7)。覚えが無ければ既定 = 100%・原点。ズームは `setZoom` と同じ 0.25〜3 に丸める。**描画のたびには戻さない**(スクロールした直後に押し戻されるため)。`applyZoom()` より前に行う |
+| `saveViewNow()`(モジュール直下) | 現在のズームと位置を `saveMapView()` へ。**`#stage` の `scroll` から300ms 置いて1回**、`pagehide`(閉じる直前)でも呼ぶ。**一覧画面のあいだは止めている** = キャンバスが隠れている間は `scrollLeft` が0を返し、ズームも前の路線図のままなので、開いている地図の位置を誤って上書きするため |
 
 ### 5.11 イベントハンドラ一覧
 
@@ -396,6 +402,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `window pointermove`(band/drag) | □選択の追従、または各要素のドラッグ移動(スナップ・`ensureRoom`・クランプ・**ハブ駅は全路線の同じ駅を同時に動かす**)。最後に `renderCanvas()+renderSide()`。`pointers` 2本以上なら `movePinch()` へ |
 | `window pointerup` / `pointercancel` | タップ確定(`pendingAct` 実行 + ダブルタップで道路確定)/ □確定 → `finishBand()` / ドラッグ終了 → `save()` |
 | `beginPinch()` / `movePinch()` | **2本指 = 開いた距離でズーム(既存 `setZoom`)・中点の移動でパン(scrollLeft/Top)**。2本目が来たら進行中のドラッグは `save()` して止める(U1) |
+| `#stage` scroll / `window pagehide` | **ズームと位置を路線図ごとに覚える**(U7)。スクロールは連続で来るので300ms 置いて1回にまとめ、閉じる直前にもう一度書く。**一覧画面のあいだは書かない** |
 | `finishBand()` | 動かさなかったクリックなら路線選択のみ。動かしていれば `pickInBox` で複数選択(`ui.bulk` に設定) |
 | `window pointermove`(drawing) | 道路描画中の予告線(`hover`)。タッチ(`pointerType==='touch'`)は除外 |
 | `cv dblclick` | 道路のダブルクリックで確定(タッチは**ダブルタップ** = 320ms以内の連続タップ) |

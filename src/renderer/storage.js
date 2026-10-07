@@ -15,8 +15,9 @@ export const KEYS = {
   open:    NS + 'open',     // 開いているタブのID一覧
   acc:     NS + 'acc',      // 右パネルの開閉状態
   panelw:  NS + 'panelw',   // 左右サイドバーの幅
-  updated: NS + 'updated'   // 路線図ごとの最終更新時刻(U5)。**文書本体には足さない**:
+  updated: NS + 'updated',  // 路線図ごとの最終更新時刻(U5)。**文書本体には足さない**:
                             //   書き出しの JSON 形式を変えないため、別のキーに持つ
+  view:    NS + 'view'      // 路線図ごとのズーム・スクロール位置(U7)。**同じ理由で文書には足さない**
 };
 
 /** 移行前の旧キー。書込みは絶対にここでは行わない(読み取り専用)。 */
@@ -51,4 +52,39 @@ export function migrateLegacyKeys() {
     catch (e) { /* 値が読めなければ移さない(各所が既定値で始める) = 失敗ではない */ }
   }
   return ok;
+}
+
+/* ---------- 見かけの位置(ズーム・スクロール)を路線図ごとに覚える(U7) ----------
+   文書本体には足さない = **書き出しの JSON 形式を変えない**(S3 の DoD と同じ考え方)。
+   表示だけの情報なので、読めなくても書けなくても握りつぶす(保存失敗の知らせにはしない)。
+   読み込みは毎回 fresh に(別タブが書き換えても上書きで消さないため)。 */
+/** その路線図の記憶 { z, l, t }。無ければ null */
+export function mapView(id) {
+  if (!id) return null;
+  let all = null;
+  try { all = JSON.parse(readRaw(KEYS.view)); } catch (e) { all = null; }
+  const v = all && typeof all === 'object' ? all[id] : null;
+  if (!v || typeof v !== 'object' || !Number.isFinite(v.z)) return null;
+  return { z: v.z, l: Number.isFinite(v.l) ? v.l : 0, t: Number.isFinite(v.t) ? v.t : 0 };
+}
+/** 見かけの位置を覚える(前と同じなら書かない = スクロールのたびに書き込まない) */
+export function saveMapView(id, z, l, t) {
+  if (!id || !Number.isFinite(z)) return;
+  let all = null;
+  try { all = JSON.parse(readRaw(KEYS.view)); } catch (e) { all = null; }
+  if (!all || typeof all !== 'object' || Array.isArray(all)) all = {};
+  const n = { z, l: Number.isFinite(l) ? l : 0, t: Number.isFinite(t) ? t : 0 };
+  const cur = all[id];
+  if (cur && cur.z === n.z && cur.l === n.l && cur.t === n.t) return;
+  all[id] = n;
+  write(KEYS.view, JSON.stringify(all));
+}
+/** その路線図を消したときに、覚えている位置も消す */
+export function forgetMapView(id) {
+  if (!id) return;
+  let all = null;
+  try { all = JSON.parse(readRaw(KEYS.view)); } catch (e) { all = null; }
+  if (!all || typeof all !== 'object' || !(id in all)) return;
+  delete all[id];
+  write(KEYS.view, JSON.stringify(all));
 }

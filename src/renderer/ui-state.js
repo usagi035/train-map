@@ -119,6 +119,7 @@ export function stampMissing() {
 // 操作で「いま開いている地図以外」が変わったときにだけ指定する。
 export const save = (changedId) => {
   clearTimeout(saveTimer); saveTimer = 0;
+  setSavePending(false);   // 保留はここで消える(変化が無くても、書くつもりだった分は終わった)
   const now = core.commit(viewNow());   // 変化が無ければ null(そのときは保存もしない)
   if (!now) return;
   let ok = true;
@@ -136,6 +137,7 @@ export const save = (changedId) => {
 export const deferSave = () => {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => { saveTimer = 0; save(); }, 600);
+  setSavePending(true);   // まだ保存していない = 「保存中…」を出す(U7)
 };
 /* ---------- 別タブとの競合(S4) ----------
    「自分の版を残す」を選ぶと、次に自分の保存が成功するまで相手の版を自動適用しない
@@ -171,8 +173,35 @@ export function setSaveFailed(on) {
     clearBanner('savefail');
     window.removeEventListener('beforeunload', unloadWhileFailing);
   }
+  renderSaveInd();   // ヘッダーの表示も合わせる(U7)
 }
 export const isSaveFailed = () => saveFailed;
+/* ---------- ヘッダーの保存インジケータ(U7) ----------
+   「保存中…(まだ保留がある)/ 保存済み / 保存に失敗」をツールバーに出す。
+   - 失敗の**知らせ**は上の S5 のバナーが担う。こちらは「いまの状態」を見せる表示。
+   - 文言は画面の他の部分と同じ日本語で持つ(指示書は英語のラベルを挙げているが、日本語の画面に
+     英語は混ざらない。i18n は入れない = Part2 の共通ルール)。
+   - 毎回読み上げると邪魔なので live region にはしない(失敗の読み上げはバナーが行う)。 */
+let savePending = false;
+const SAVE_IND = { saving: '保存中…', saved: '保存済み ✓', failed: '保存に失敗' };
+function renderSaveInd() {
+  // テスト(node)から読み込まれると document が無いことがあるので、無いときは何もしない
+  const el = typeof document === 'undefined' ? null : document.getElementById('saveind');
+  if (!el) return;
+  const s = saveFailed ? 'failed' : savePending ? 'saving' : 'saved';
+  if (el.dataset.state === s) return;
+  el.dataset.state = s;
+  el.textContent = SAVE_IND[s];
+}
+/** 「まだ保存していない変更がある(保留中)」を示す */
+export function setSavePending(on) {
+  const want = !!on;
+  if (savePending === want) return;
+  savePending = want;
+  renderSaveInd();
+}
+// 起動時の表示は index.html の初期値(「保存済み ✓」)そのまま。失敗しているときだけ下で上書きする
+// (ここでは document を触らない = テスト(node)からも読み込めるようにするため)
 // 起動時の旧キー移行で書けなかった場合は、ここで最初の1回を知らせる(書けない環境は以降も同じ)
 if (!migrateOk) setSaveFailed(true);
 // 読み込んだ文書ごとに画面の状態をまとめて入れ替える(JSONの読み込み・別ウィンドウとの同期で使う)

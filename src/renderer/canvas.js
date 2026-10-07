@@ -5,10 +5,14 @@
 import { S, G, mw, mh, clamp, lw, isDark, BG, findStationIn, linesOfIn, allStations, blankMap, STOP_COLOR, OFF_LINK } from '../core/model.js';
 import { dist, isLoop, segCount, segA, segB, segPt } from '../core/geometry.js';
 import { esc, col, num, idf, ui, curMap, curLine, findStation, linesOf, showEl, getBulk, rectOf, BAND_COLOR } from './ui-state.js';
+import { mapView, saveMapView } from './storage.js';
 
 // いま引いている□(矩形選択)は画面側(renderer)が持つ。描画時にそちらから受け取る
 let bandOf = () => null;
 export function setBandSource(fn) { bandOf = fn; }
+
+// どの路線図の位置を戻したか(U7)。路線図が切り替わった最初の描画でだけ戻す
+let viewMapId = null;
 
 export function renderCanvas() {
   const band = bandOf();   // 空白ドラッグ中は画面側の□を描く
@@ -27,6 +31,14 @@ export function renderCanvas() {
       const st = document.getElementById('stage');
       if (st.scrollLeft || st.scrollTop) { st.scrollLeft = 0; st.scrollTop = 0; }
     } else em.hidden = true;
+  }
+  // 路線図ごとのズーム・スクロールを戻す(U7)。**路線図が切り替わった最初の描画で1回だけ**行う
+  // (描画のたびに戻すと、スクロールした直後に押し戻される)。覚えが無ければ既定 = 100%・原点。
+  if (viewMapId !== ui.map) {
+    viewMapId = ui.map;
+    const v = mapView(ui.map), st = document.getElementById('stage');
+    ui.zoom = v ? clamp(v.z, 0.25, 3) : 1;
+    if (st) { st.scrollLeft = v ? v.l : 0; st.scrollTop = v ? v.t : 0; }
   }
   applyZoom();
   const cw = num(mw(m)), ch = num(mh(m));   // S1b: 数値であることを確認してから入れる
@@ -237,4 +249,19 @@ export function setZoom(z, cx, cy) {
   const wx = (stage.scrollLeft + cx) / ui.zoom, wy = (stage.scrollTop + cy) / ui.zoom;
   ui.zoom = z; applyZoom();
   stage.scrollLeft = wx * z - cx; stage.scrollTop = wy * z - cy;
+  saveMapView(ui.map, ui.zoom, stage.scrollLeft, stage.scrollTop);   // 路線図ごとに覚える(U7)
 }
+
+/* ---------- スクロール位置の記憶(U7) ----------
+   スクロールは連続で来るので、300ms 置いて1回にまとめて書く。
+   画面を閉じる直前にもう一度、覚えた位置を持ったまま終わらないようにする。 */
+let viewTimer = 0;
+const saveViewNow = () => {
+  clearTimeout(viewTimer); viewTimer = 0;
+  // 一覧画面では覚えない。キャンバスが隠れている間は scrollLeft が 0 を返し、
+  // さらに見ているズームは前の路線図のままなので、今開いている地図の位置を誤って上書きする。
+  if (ui.home) return;
+  saveMapView(ui.map, ui.zoom, stage.scrollLeft, stage.scrollTop);
+};
+stage.addEventListener('scroll', () => { clearTimeout(viewTimer); viewTimer = setTimeout(saveViewNow, 300); });
+window.addEventListener('pagehide', saveViewNow);
