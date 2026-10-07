@@ -4,6 +4,7 @@
    =========================================================================== */
 import { S } from '../core/model.js';
 import { core, ui, esc, idf, curMap, viewNow, save, renderAll } from './ui-state.js';
+import { KEYS } from './storage.js';
 
 export function renderTabs() {
   document.getElementById('tabs').innerHTML =
@@ -17,7 +18,7 @@ export function renderHome() {
     '</ul><button id="hnew">新しい路線図</button>';
 }
 
-export function persistOpen() { if (!location.hash) try { localStorage.setItem('railopen', JSON.stringify(ui.open)); } catch (e) {} }
+export function persistOpen() { if (!location.hash) try { localStorage.setItem(KEYS.open, JSON.stringify(ui.open)); } catch (e) {} }
 
 function openMap(id) {
   if (!ui.open.includes(id)) ui.open.push(id);

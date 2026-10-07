@@ -5,6 +5,7 @@
 import { S, G, mw, mh, clamp, mkMap, findStationIn, linesOfIn } from '../core/model.js';
 import { dist, segPt } from '../core/geometry.js';
 import { createCore } from '../core/operations.js';
+import { KEYS, migrateLegacyKeys } from './storage.js';
 
 // 状態の読み書き・編集操作はすべて core 経由(画面が直接書き換えない。指示書 §6/§7)
 export const core = createCore();
@@ -31,11 +32,13 @@ export const HINTS = {
 };
 
 /* ---------- 状態の読み込み(localStorage の読み書きは画面側の責務) ---------- */
+// 旧キー(railmaps 等)から名前空間つきキーへ移してから読む。旧キーは残す(S3)。
+migrateLegacyKeys();
 // 読み込んだ保存データは必ずサニタイズを通す(core.importDocument の中)。
 // 直せないときだけ初期状態で始める。ここで書き戻すことは無いので、
 // 保存文字列はユーザーが実際に編集するまで残ったまま(壊したデータは消さない)。
 let stored = null;
-try { stored = JSON.parse(localStorage.getItem('railmaps')); } catch (e) {}
+try { stored = JSON.parse(localStorage.getItem(KEYS.maps)); } catch (e) {}
 let bootWarnings = [];
 if (stored && Array.isArray(stored.maps) && stored.maps.length) {
   try { bootWarnings = core.importDocument(stored); }
@@ -48,7 +51,7 @@ export let ui = { map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, too
 const hm = S.maps.find(m => m.id === decodeURIComponent(location.hash.slice(1)));   // 別ウィンドウで開いたときの路線図
 if (hm) { ui.map = hm.id; ui.line = hm.lines[0].id; ui.open = [hm.id]; }
 else {
-  try { const o = JSON.parse(localStorage.getItem('railopen')); if (Array.isArray(o)) ui.open = o.filter(id => S.maps.some(m => m.id === id)); } catch (e) {}
+  try { const o = JSON.parse(localStorage.getItem(KEYS.open)); if (Array.isArray(o)) ui.open = o.filter(id => S.maps.some(m => m.id === id)); } catch (e) {}
   const om = S.maps.find(m => m.id === ui.open[0]);
   if (om) { ui.map = om.id; ui.line = om.lines[0].id; } else ui.home = true;
 }
@@ -75,7 +78,7 @@ export const save = () => {
   clearTimeout(saveTimer); saveTimer = 0;
   const now = core.commit(viewNow());   // 変化が無ければ null(そのときは保存もしない)
   if (!now) return;
-  try { localStorage.setItem('railmaps', now); } catch (e) {
+  try { localStorage.setItem(KEYS.maps, now); } catch (e) {
     // 保存できないと黙っていると消えてしまうので注意を出す(画像を取り込むと容量上限に当たりやすい)
     console.warn('自動保存に失敗しました:', e);
     if (!quotaWarned) {

@@ -54,7 +54,7 @@ train/
 すべて **グローバル変数** 2つに集約されている(`renderer.js` L41・L90)。
 
 ```js
-let S = { maps: [ Map, … ] }   // 永続データ。localStorage('railmaps') に JSON で保存
+let S = { maps: [ Map, … ] }   // 永続データ。localStorage('train-map:v1:maps') に JSON で保存
 let ui = { map, line, sel, tool, open, home, zoom, drawing, bulk, bulkRect, bulkMap }  // 画面状態(保存されない)
 ```
 
@@ -126,7 +126,7 @@ const uid = () => Math.random().toString(36).slice(2, 9);   // renderer.js L25
 
 ## 6. ファイル形式
 
-- **保存先は `localStorage('railmaps')`**、値は `JSON.stringify(S)`。エクスポートは同じ構造の `railmaps.json`(`#exp` L1225)。
+- **保存先は `localStorage('train-map:v1:maps')`**、値は `JSON.stringify(S)`。エクスポートは同じ構造の `railmaps.json`(`#exp` L1225)。
 - 構造: `{ maps: [ { id, name, bg, w, h, lines[], roads[], stops[], hubs[], boxes[], images[], show{} } ] }`
 - **`formatVersion` のようなバージョンフィールドは無い。**
 - ただし **マイグレーションの仕組みは既に存在する**: `migrate()` L45-88 が旧形式を変換する
@@ -151,7 +151,8 @@ const uid = () => Math.random().toString(36).slice(2, 9);   // renderer.js L25
 
 - **単一ウィンドウ内のタブ**(`#tabs`)+ 「一覧」画面(`renderHome()` L340)。
 - `window.open('index.html#<mapId>')` で**別ウィンドウ**。hash があるウィンドウはその路線図だけを開く(L91-92)。
-- 開いているタブは `localStorage('railopen')` に記憶(`persistOpen()` L1301)。開閉状態は `railacc`。
+- 開いているタブは `localStorage('train-map:v1:open')` に記憶(`persistOpen()` L1301)。開閉状態は `train-map:v1:acc`。
+  キー一覧は `src/renderer/storage.js`(旧 `railmaps` 等からは起動時に `migrateLegacyKeys()` が移行、旧キーは残す)。
 - **別ウィンドウ同士は同一 localStorage を使い、`storage` イベントで常に最新を全面的に取り込む**(L1688)。取り込み時に履歴はリセット。
 - 終了時: **保存用のフックは存在しない**。`save()` が編集ごとに都度書き込んでいるため、ウィンドウを閉じてもデータは最後の `save()` のまま(失われるものはない)。**閉じる前の確認ダイアログは無い**(未保存=蓄積された履歴のみ)。
 - 未コミットの編集は基本発生しない(`save()` が必ず走るため)。

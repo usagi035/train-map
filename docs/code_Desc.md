@@ -17,19 +17,29 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
             ├─ renderer/ui-state.js … 共通状態・共通操作・renderAll(各画面モジュールはここからのみ import)
             ├─ renderer/{canvas,side-panel,left-panel,tabs}.js … 描画と各画面の操作
             ├─ core/{model,geometry,migration,sanitize,history,operations}.js … 画面に依存しない操作(createCore)
-            ├─ 起動時: localStorage('railmaps') 読込 → sanitizeDocument() → migrate() → importDocument → renderAll()
+            ├─ 起動時: migrateLegacyKeys()(旧キー→名前空間つきキー) → localStorage('train-map:v1:maps') 読込 → sanitizeDocument() → migrate() → importDocument → renderAll()
             ├─ 編集のたびに save() … 履歴に積み + localStorage へ書く
             └─ renderAll() = renderTabs / renderTools / renderCanvas / renderSide(+renderQuick) / renderLeft
 ```
 
 ### localStorage に保存するキー
 
-| キー | 中身 | 書き出し関数 |
+すべて `src/renderer/storage.js` の定数 `KEYS`(名前空間 `train-map:v1:`)経由。
+**キー名はここだけを出所とし、画面側の各モジュールは `KEYS` を import する**(S3)。
+
+| キー(実体) | 中身 | 書き出し関数 |
 | --- | --- | --- |
-| `railmaps` | 全路線図データ `S`(1つの JSON) | `save()` / `applySnap()` |
-| `railopen` | 開いているタブの路線図ID配列 | `persistOpen()` |
-| `railacc` | 右パネル各グループの開閉状態(クイック操作パネル `#quick` は開閉を持たないため対象外) | `saveAcc()` |
-| `railpanelw` | 左右サイドバーの幅 `{left, right}`(px)。ドラッグ・キーボード・ダブルクリックで変更 | `savePanelW()`(`renderer.js`) |
+| `train-map:v1:maps` | 全路線図データ `S`(1つの JSON) | `save()` / `applySnap()` |
+| `train-map:v1:open` | 開いているタブの路線図ID配列 | `persistOpen()` |
+| `train-map:v1:acc` | 右パネル各グループの開閉状態(クイック操作パネル `#quick` は開閉を持たないため対象外) | `saveAcc()` |
+| `train-map:v1:panelw` | 左右サイドバーの幅 `{left, right}`(px)。ドラッグ・キーボード・ダブルクリックで変更 | `savePanelW()`(`renderer.js`) |
+
+> **旧キーからの移行(S3)**: 移行前の `railmaps` / `railopen` / `railacc` / `railpanelw` は起動時に
+> `migrateLegacyKeys()` が「新キーが無くて旧キーにだけある」場合に限り読み取って新キーへ移す。
+> 移行のとき**旧キーは消さない**(同じリリースでデータを捨てないため)。地図本体は移行時も
+> `sanitizeDocument()` を通す。直せない文書なら移さず、旧キーを残したまま起動側が初期状態で始める。
+> 旧キーの削除タイミングは `storage.js` の `LEGACY` 付近の TODO(次に保存形式を変えるリリース)。
+> 同じオリジンには他の公開物も置けるので、短く汎用的なキー名は使わない。
 
 > **注意**: 同じブラウザで複数タブを開くと、最後に保存した側が勝つ(上書き競合)。これを防ぐ仕組みは無いので、
 > 保存のたびに発火する `storage` イベント(§5.14)で変更を互いに取り込む。単一インスタンスロックの代わりの制御。
@@ -239,11 +249,11 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 
 | 名前 | 動作 |
 | --- | --- |
-| `S` 読み込み | `localStorage('railmaps')` を parse。壊れていたら空の路線図1枚を用意 |
+| `S` 読み込み | `localStorage('train-map:v1:maps')` を parse(旧 `railmaps` からは `migrateLegacyKeys()` で移行)。壊れていたら空の路線図1枚を用意 |
 | `migrate(data)` | **旧形式の変換**。①`roads/stops/images/show/hubs` の欠落配列を補う ②`show` の4キーを boolean に正規化 ③駅の `links` が**配列(旧)**なら所属路線ごとの**オブジェクト**へ変換し、存在しない駅IDを除去 ④`type:'road'` の路線(旧道路表現)を `roads` + `stops` へ移す |
 | `ui` 初期化 | 選択中路線図・路線・ツール等を初期化 |
 | `hm` | `location.hash` がある = **別ウィンドウで開いた**路線図。その1つだけを開く |
-| タブ復元 | hash が無ければ `railopen` から開いていたタブを復元。無ければ一覧画面 |
+| タブ復元 | hash が無ければ `train-map:v1:open` から開いていたタブを復元。無ければ一覧画面 |
 
 ### 5.3 アクセサ(路線図・路線・駅・接続)(L99〜143)
 
@@ -267,7 +277,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `snapStr()` | `JSON.stringify(S)`(失敗時は空文字) |
 | `viewNow()` / `syncView()` | 表示中の路線図・路線を記録(undo で開き直すため) |
 | `updateUndoButtons()` | ツールバーの ↶/↷ を有効/無効化 |
-| **`save()`** | ①変化が無ければ何もしない ②**変更前のスナップを `undoStack` に積む**(上限50、`redoStack` はクリア) ③`localStorage('railmaps')` へ書く。**失敗時は警告＋1セッション1回だけ alert**(容量超過対策) ④Undoボタン更新 |
+| **`save()`** | ①変化が無ければ何もしない ②**変更前のスナップを `undoStack` に積む**(上限50、`redoStack` はクリア) ③`localStorage('train-map:v1:maps')` へ書く。**失敗時は警告＋1セッション1回だけ alert**(容量超過対策) ④Undoボタン更新 |
 | `deferSave()` | 600ms 後に `save()`。文字入力・スライダーの連続操作を**1履歴にまとめる** |
 | `applySnap(e)` | スナップ文字列 `S` に差し替え、localStorage へ書く、開いているタブ/路線を有効な範囲に補正、選択と□選択を解除して `renderAll()` |
 | `undo()` / `redo()` | **道路の描画中は履歴ではなく「頂点を1つ戻す」**(0個なら中止)。それ以外はスナップを差し替える |
@@ -391,7 +401,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | --- | --- |
 | `input` イベント | 先頭で **`.swin`(トグルスイッチ)は return**(スイッチの操作は `change` 側でまとめて処理し、`save()` の二重発火を防ぐ)。続いて全入力欄の分岐: `mname/lname/lcolor/lwidth`(路線)、`mbg`(背景)、`sname/sshape/scolor/snameRot`(駅)、`cname`(踏切)、`bsname/bskind/bscolor/bsnameRot`(バス停)、`rname/rcolor/rwidth`(道路)、`btext/bfill`(ラベル枠)、`iop/izone`(画像不透明度・重ね順)。**`.shubline`(属する路線のチェック)**: チェックで路線に組み込み `hubs` から外す(初めて乗る路線なら「路線外」の接続を移す)、外すとどの路線にも無くなったら **`m.hubs` へ戻して消さない**+`flattenLinks()`。末尾: 文字入力とスライダーは `deferSave()`、他は `save()` |
 | `change` イベント | `#gap`(前の駅との間隔)…**これ以降の駅も一緒に動かす** / `#bw` `#bh`(ラベル枠のサイズ) / **トグルスイッチ `.swin`**: `#snap`→`setSnap()`、`#autosel`→`setAutosel()`(どちらも履歴に残らない画面だけの設定)、`#lloop`→`core.toggleLoop()`、`#shub`→`setHub(s, checked)`、`data-k` あり→`core.toggleShow()`(+□選択解除・見えない選択解除)。いずれも `save()`+`renderAll()` でデータ側を反転し、表示は描き直しで追随。それ以外は `renderSide()` で再描画 |
-| `click` イベント | 見出し `[data-sech]` で開閉(`railacc` に記憶) → `.lyr`(**👁表示/非表示・🔒ロック・↑↓重ね順**。表示設定が変わったら□選択解除・見えない選択解除) → 路線行(`ui.line` 切替) → 道路行(選択) → 画像行(選択) → `sreset`/`bsreset`(色を初期値へ) → `droad`/`idel`/`ichg` → 接続リストの `lup`/`ldown`/`ldel`(↑↓・削除) → 接続行のクリック(**その駅を選択してパネル切替**) → `newwin`(別ウィンドウ) → `addline`(路線追加) → `addroadp`(道路描画へ) → `dline`(路線削除。**消える路線にしか無かった乗り換え駅は `hubs` に残し、路線ごとの接続は掃除**) → `dmap`(路線図削除)。**※ `.showel`・`#shub`・`#lloop`・`#snap`・`#autosel` は `#quick` 側の要素で、スイッチなので `click` では処理しない(`change` 参照)** |
+| `click` イベント | 見出し `[data-sech]` で開閉(`train-map:v1:acc` に記憶) → `.lyr`(**👁表示/非表示・🔒ロック・↑↓重ね順**。表示設定が変わったら□選択解除・見えない選択解除) → 路線行(`ui.line` 切替) → 道路行(選択) → 画像行(選択) → `sreset`/`bsreset`(色を初期値へ) → `droad`/`idel`/`ichg` → 接続リストの `lup`/`ldown`/`ldel`(↑↓・削除) → 接続行のクリック(**その駅を選択してパネル切替**) → `newwin`(別ウィンドウ) → `addline`(路線追加) → `addroadp`(道路描画へ) → `dline`(路線削除。**消える路線にしか無かった乗り換え駅は `hubs` に残し、路線ごとの接続は掃除**) → `dmap`(路線図削除)。**※ `.showel`・`#shub`・`#lloop`・`#snap`・`#autosel` は `#quick` 側の要素で、スイッチなので `click` では処理しない(`change` 参照)** |
 | `dragstart/over/drop/dragend` | 接続リストのドラッグ並べ替え(**同じリストの中だけ**可) |
 | `change`(`.linksel`) | 接続先セレクトで駅を選ぶと**その場で追加**(重複は無視)。追加ボタンは無い |
 
@@ -408,7 +418,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | --- | --- |
 | `pointerdown` | ドラッグ開始。`setPointerCapture` で指を外れても追従、`body` の文字選択を停止 |
 | `pointermove` | その場のドラッグ量を足し引きして `setPanelW(side, w)`(左は右へ引くと広がる、右は左へ引くと広がる) |
-| `pointerup` / `pointercancel` | ドラッグ終了 → `savePanelW()` で `localStorage('railpanelw')` に保存 |
+| `pointerup` / `pointercancel` | ドラッグ終了 → `savePanelW()` で `localStorage('train-map:v1:panelw')` に保存 |
 | `dblclick` | 既定値(`PWDEF`:左400 / 右270)へ戻して保存 |
 | `keydown` | `←`/`→`=10px(`Shift`=1px)、`Home`/`End`=最小/最大、`Enter`=既定。いずれも `preventDefault()` して保存 |
 | `window resize` | `applyPanelW()` で**記憶した幅を今の画面幅に当て直す**(保存値は変えない) |
@@ -430,7 +440,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | --- | --- |
 | `checkQuota()` | スナップが4.5MBを超えたら「上限に近づいている」alert |
 | `importImageFile(file, replaceId)` | 画像判定 → FileReader → Image。**最長辺1600px に縮小**(または400KB超)して canvas から `image/webp` 0.85(WebP非対応環境はPNG)に再エンコード → `replaceId` あれば差し替え(位置・大きさはそのまま)、無ければ**表示中画面の中央に 最長辺900px で配置**。`show.img = true` に復帰、`ensureRoom`、`checkQuota()` |
-| `persistOpen()` | `railopen` へ開いているタブを保存(hash 付き=別ウィンドウでは保存しない) |
+| `persistOpen()` | `train-map:v1:open` へ開いているタブを保存(hash 付き=別ウィンドウでは保存しない) |
 | `exportImage()` | SVG を serialize → base64 → Image → canvas に背景色ごと描画 → **PNG をダウンロード** |
 
 ### 5.13 路線図タブの管理(L1328〜1372)
@@ -447,7 +457,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 
 | 箇所 | 動作 |
 | --- | --- |
-| `window 'storage'` | 別ウィンドウが `railmaps` を書き換えたら取り込む(**ドラッグ中は無視**)。取り込みは**保存ボタンと同じ入口**を通す(= `sanitizeDocument()` → `migrate()`。壊れた中身は例外 → `catch` で無視)。取り込み時に**履歴はリセット**、開いているタブ/路線を有効な範囲に補正。`renderTabs`+`renderCanvas`、**入力欄にフォーカスがある間は `renderSide()` しない**(打ちかけの入力を消さないため) |
+| `window 'storage'` | 別ウィンドウが `train-map:v1:maps` を書き換えたら取り込む(**ドラッグ中は無視**)。取り込みは**保存ボタンと同じ入口**を通す(= `sanitizeDocument()` → `migrate()`。壊れた中身は例外 → `catch` で無視)。取り込み時に**履歴はリセット**、開いているタブ/路線を有効な範囲に補正。`renderTabs`+`renderCanvas`、**入力欄にフォーカスがある間は `renderSide()` しない**(打ちかけの入力を消さないため) |
 
 ---
 
@@ -501,7 +511,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 11. **サイドバーの幅は「見たまま」が保存値** — `effWidths()`(表示幅の決定)と `setPanelW()`(ドラッグ結果の保存)が
     同じ実効幅を使うため、ウィンドウが狭くて自動で縮んだ場合でも、保存値がその縮んだ値に上書きされることはない。
     データ形式(`railmaps`)には一切触れない UI の設定値(`railpanelw`)だけを増やしている。
-12. **読み込むJSONは必ず `sanitizeDocument()` を通る** — 入口は3つ(①「読み込み」ボタン、②起動時の `railmaps` 読込、
+12. **読み込むJSONは必ず `sanitizeDocument()` を通る** — 入口は3つ(①「読み込み」ボタン、②起動時の `train-map:v1:maps` 読込、
     ③ `storage` イベントのタブ間同期)で、すべて `core.importDocument()` 経由 = `sanitizeDocument()` → `migrate()` の順。
     - **白名单で作り直す**(入力は書き換えない)。色は `#rrggbb` のみ、数値は `Number.isFinite` のみ(文字列は数値化しない)、
       IDは `[A-Za-z0-9_-]{1,64}` かつ一意(作り直したらリンク参照も追従)、列挙値は許可リスト、

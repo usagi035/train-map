@@ -9,15 +9,16 @@ import { core, ui, esc, col, num, idf, curMap, curLine, findStation, linesOf, sa
          getBulk, clearBulk, showEl, selVisible, del, finishRoad, startRoadDrawing, imgPick,
          snapOn, autoselOn, setSnap, setAutosel } from './ui-state.js';
 import { renderCanvas } from './canvas.js';
+import { KEYS } from './storage.js';
 import { renderTabs, deleteMap } from './tabs.js';
 
 /* ---------- 右パネルのグループ化(開閉できるセクション) ---------- */
 // 見出しをクリックすると開閉。開閉状態は localStorage に覚えておく
 let acc = {};
-try { acc = JSON.parse(localStorage.getItem('railacc')) || {}; } catch (e) { acc = {}; }
+try { acc = JSON.parse(localStorage.getItem(KEYS.acc)) || {}; } catch (e) { acc = {}; }
 if (acc.map == null) acc.map = false;   // 路線図の設定(名前・背景・削除)は既定で閉じる
 const accOpen = id => acc[id] !== false;
-const saveAcc = () => { try { localStorage.setItem('railacc', JSON.stringify(acc)); } catch (e) {} };
+const saveAcc = () => { try { localStorage.setItem(KEYS.acc, JSON.stringify(acc)); } catch (e) {} };
 let selKey = '';   // 選択が変わったときは「選択中」を開いたままにする
 function sec(id, title, body, badge) {
   const open = accOpen(id);

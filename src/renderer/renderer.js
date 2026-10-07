@@ -13,11 +13,12 @@ import { cv, stage, pt, setZoom, renderCanvas, setBandSource } from './canvas.js
 import { renderSide } from './side-panel.js';
 import { renderLeft } from './left-panel.js';
 import { renderTabs, renderHome, persistOpen } from './tabs.js';
+import { KEYS } from './storage.js';
 
 // 履歴のスナップを画面へ適用する(表示中の路線図・路線を、そのときのものへ合わせ直す)
 function applySnap(e) {
   // 状態そのものは core.undo() / core.redo() が入れ替え済み
-  try { localStorage.setItem('railmaps', e.s); } catch (err) {}
+  try { localStorage.setItem(KEYS.maps, e.s); } catch (err) {}
   const v = e.v || {};
   ui.open = ui.open.filter(id => S.maps.some(m => m.id === id));
   const mid = S.maps.some(m => m.id === v.map) ? v.map : S.maps[0].id;
@@ -450,7 +451,7 @@ function exportImage() {
 
 // 別ウィンドウでの変更を取り込む
 window.addEventListener('storage', e => {
-  if (e.key !== 'railmaps' || !e.newValue || drag) return;
+  if (e.key !== KEYS.maps || !e.newValue || drag) return;
   try {
     const d = JSON.parse(e.newValue);
     // 保存文字列も読み込みと同じ入口でサニタイズ + 移行する(不正なら例外 → 下で黙って無視)
@@ -474,7 +475,7 @@ window.addEventListener('storage', e => {
    左 = 「駅リスト + クイック操作」を統合した #leftcol、右 = #side。
    幅は CSS 変数 --lw / --rw で渡す(描画側は JS に依存しない)。ドラッグ以外に
    キーボード(←/→=10px、Shift=1px、Home/End=最小/最大、Enter=既定)でも変えられる。 */
-const PWKEY = 'railpanelw', PWDEF = { left: 400, right: 270 };
+const PWKEY = KEYS.panelw, PWDEF = { left: 400, right: 270 };
 const PWRANGE = { left: [260, 640], right: [220, 560] };
 const STAGE_MIN = 200;   // キャンバスに最低限残す幅
 const pw = (() => {
