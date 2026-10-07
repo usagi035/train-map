@@ -3,15 +3,16 @@
    (元は src/ui/renderer.js の1ファイル。指示書 §8〜§12 に沿って画面側を分割した)
    =========================================================================== */
 import { S, G, mw, mh, clamp, mkMap, findStationIn, linesOfIn, lw, isDark, BG, SHAPES } from '../core/model.js';
-import { dist } from '../core/geometry.js';
+import { dist, segPt } from '../core/geometry.js';
 import { LIMITS, safeFilename } from '../core/sanitize.js';
 import { core, ui, replaceUi, esc, curMap, curLine, findStation, linesOf, viewNow, updateUndoButtons,
          setRender,
-         save, getBulk, clearBulk, rectOf, pickInBox, isStationLocked, hitLocked, lineEditBlocked,
+         save, deferSave, getBulk, clearBulk, rectOf, pickInBox, isStationLocked, hitLocked, selLocked,
+         lineEditBlocked,
          snapOn, autoselOn, snapPt, renderAll, renderTools, del, cancelRoad, finishRoad, startRoadDrawing,
          addRoadPoint, updateRoadHint, imgPick,
          keepLocalVersion, clearLocalAuthority, shouldAskRemote, setSaveFailed } from './ui-state.js';
-import { cv, stage, pt, setZoom, renderCanvas, setBandSource } from './canvas.js';
+import { cv, stage, pt, setZoom, centerOn, renderCanvas, setBandSource } from './canvas.js';
 import { renderSide } from './side-panel.js';
 import { renderLeft } from './left-panel.js';
 import { renderTabs, renderHome, persistOpen } from './tabs.js';
@@ -48,11 +49,14 @@ function undo() {
     } else cancelRoad();
     return;
   }
+  save();   // 矢印の連打など「まだ履歴に積んでいない変更」を先に積む(U4)。
+            // 積まないと、戻したい1回の直前にある変更まで一緒に消える
   const e = core.undo();
   if (e) applySnap(e);
 }
 function redo() {
   if (ui.drawing) return;
+  save();   // 同上: 戻したあとの変更を先に確定してからやり直す(U4)
   const e = core.redo();
   if (e) applySnap(e);
 }
@@ -167,6 +171,9 @@ function movePinch() {
 }
 
 cv.addEventListener('pointerdown', e => {
+  // キャンバスをフォーカスして、そのあとの矢印キー・Tab を受け取るようにする(U4)。
+  // マウスでは :focus-visible が出ないので、見た目は変わらない
+  try { cv.focus({ preventScroll: true }); } catch (err) { try { cv.focus(); } catch (e2) {} }
   if (e.button !== 0 || spaceDown) return;   // 中ボタン / Space押下中はパン処理へ
   // 押した指(マウス)を受け取り続ける。指がキャンバスの外へ出ても移動・離しを追える
   try { cv.setPointerCapture(e.pointerId); } catch (err) {}
@@ -384,26 +391,125 @@ window.addEventListener('pointermove', e => {
 });
 // ダブルクリックで道路を確定
 cv.addEventListener('dblclick', () => { if (ui.drawing) finishRoad(); });
+
+/* ---------- キーボードでの編集(U4) ----------
+   マウスのドラッグと同じ core の操作を使う(状態を書き換えるのは core 経由だけ)。
+   ステップは「グリッドに合わせる」ON = 1マス(G)、OFF = 1単位、Shift で5倍。
+   連打は 600ms でまとめて1回の履歴にする(文字入力と同じ deferSave の扱い)。 */
+const stepOf = e => (snapOn() ? G : 1) * (e.shiftKey ? 5 : 1);
+
+// 矢印キーで動かしてよいか:入力中ではなく、キャンバスか未フォーカスのときだけ。
+// (サイドバー幅のハンドルは ← → を自分の幅変更に使うので、フォーカス中は触らない)
+const nudgeFocus = () => {
+  const ae = document.activeElement;
+  return !isTextEditing() && (!ae || ae === document.body || ae === cv);
+};
+
+// 選択中の要素の座標(Tab で選ぶのは主要な要素だけなので、それだけで足りる)
+function selPos(sel) {
+  const m = curMap();
+  if (sel.t === 'st') { const s = findStation(sel.id); return s ? { x: s.x, y: s.y } : null; }
+  if (sel.t === 'stop') { const s = (m.stops || []).find(x => x.id === sel.id); return s ? { x: s.x, y: s.y } : null; }
+  if (sel.t === 'cx') {
+    const l = curLine(), c = l.crossings.find(x => x.id === sel.id);
+    return c ? segPt(l, c.seg, c.t) : null;   // 踏切は保存座標を持たないので線の上の位置から取る
+  }
+  if (sel.t === 'bx') { const b = (m.boxes || []).find(x => x.id === sel.id); return b ? { x: b.x, y: b.y } : null; }
+  if (sel.t === 'img') { const im = (m.images || []).find(x => x.id === sel.id); return im ? { x: im.x, y: im.y } : null; }
+  if (sel.t === 'road') { const r = (m.roads || []).find(x => x.id === sel.id); return r && r.pts.length ? r.pts[0] : null; }
+  return null;
+}
+
+// 矢印キーで選択中の要素をステップ移動する。マウスのドラッグと同じ分岐・同じ core 呼び出し。
+function nudge(dx, dy) {
+  const sel = ui.sel;
+  if (!sel || selLocked(sel)) return false;   // ロック中の路線は動かせない(同じ理由でドラッグも無理)
+  const m = curMap();
+  if (sel.t === 'st') {
+    const s = findStation(sel.id); if (!s) return false;
+    const q = { x: clamp(s.x + dx, 0, mw(m)), y: clamp(s.y + dy, 0, mh(m)) };
+    core.ensureRoom(m, q.x, q.y);
+    core.moveStationTo(m, s, q.x, q.y);        // 乗り換え駅は全路線の同じ駅も動かす
+  } else if (sel.t === 'stop') {
+    const s = (m.stops || []).find(x => x.id === sel.id); if (!s) return false;
+    const q = { x: clamp(s.x + dx, 0, mw(m)), y: clamp(s.y + dy, 0, mh(m)) };
+    core.ensureRoom(m, q.x, q.y);
+    core.update(s, { x: q.x, y: q.y });
+  } else if (sel.t === 'cx') {
+    const l = curLine(), c = l.crossings.find(x => x.id === sel.id);
+    const p0 = c && segPt(l, c.seg, c.t);
+    if (!p0) return false;
+    core.moveCrossingTo(l, c, { x: p0.x + dx, y: p0.y + dy }, snapOn());   // 線の上へ投影して戻す
+  } else if (sel.t === 'bx') {
+    const b = (m.boxes || []).find(x => x.id === sel.id); if (!b) return false;
+    const q = { x: clamp(b.x + dx, 0, Math.max(0, mw(m) - b.w)), y: clamp(b.y + dy, 0, Math.max(0, mh(m) - b.h)) };
+    core.ensureRoom(m, q.x + b.w, q.y + b.h);
+    core.update(b, { x: q.x, y: q.y });
+  } else if (sel.t === 'img') {
+    const im = (m.images || []).find(x => x.id === sel.id); if (!im) return false;
+    const q = { x: clamp(im.x + dx, 0, Math.max(0, mw(m) - im.w)), y: clamp(im.y + dy, 0, Math.max(0, mh(m) - im.h)) };
+    core.ensureRoom(m, q.x + im.w, q.y + im.h);
+    core.update(im, { x: q.x, y: q.y });
+  } else if (sel.t === 'road') {
+    const r = (m.roads || []).find(x => x.id === sel.id); if (!r || !r.pts.length) return false;
+    core.ensureRoom(m, Math.max(...r.pts.map(p => p.x)) + dx, Math.max(...r.pts.map(p => p.y)) + dy);
+    r.pts.forEach(p => core.update(p, { x: clamp(p.x + dx, 0, mw(m)), y: clamp(p.y + dy, 0, mh(m)) }));
+  } else return false;
+  renderCanvas(); renderSide();
+  deferSave();
+  return true;
+}
+
+// Tab / Shift+Tab: キャンバス内の要素を順に選ぶ。
+// 順番は pickInBox の並び(路線ごとの駅 → 乗り換え駅 → バス停 → 踏切 → ラベル枠 → 画像 → 道路)。
+function cycleSel(back) {
+  const m = curMap();
+  const list = pickInBox(m, { x0: 0, y0: 0, x1: mw(m), y1: mh(m) });
+  if (!list.length) { ui.sel = null; renderAll(); return; }
+  const i = ui.sel ? list.findIndex(h => h.t === ui.sel.t && h.id === ui.sel.id) : -1;
+  const n = i < 0 ? (back ? list.length - 1 : 0) : (i + (back ? list.length - 1 : 1)) % list.length;
+  ui.sel = list[n];
+  renderAll();
+  const p = selPos(ui.sel);
+  if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) centerOn(p.x, p.y);   // 選んだ要素が見えるよう中央へ
+}
+
 window.addEventListener('keydown', e => {
   // タブを閉じる。Ctrl+W/Cmd+W はブラウザ(タブを閉じる)が先に掴むため Web 版では Alt+W。
   // e.code は配列・OS に依存しない物理キー(Mac の Option+W は表示文字が '∫' になる)。key の方でも受ける。
   if (e.altKey && (e.code === 'KeyW' || e.key.toLowerCase() === 'w')) { e.preventDefault(); if (!window.__closeTab()) window.close(); return; }
   const k = e.key.toLowerCase();
-  const ae = document.activeElement;
-  const inText = ae && /INPUT|TEXTAREA/.test(ae.tagName) && !/^(checkbox|radio|range|color|button|submit|file|hidden)$/i.test(ae.type);
+  // 入力欄・プルダウン・編集可能領域ではアプリのショートカットを受け付けない。
+  // ※ 以前は `/INPUT|TEXTAREA/` のみで、SELECT と contenteditable を見ておらず、
+  //   プルダウンにフォーカスしたまま Backspace を押すと選択中の駅が消えていた(U4 の修正)
   if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y') && !e.altKey) {
-    if (inText) return;                       // テキスト欄ではブラウザ標準の取り消しを使う
+    if (isTextEditing()) return;                 // 入力中はブラウザ標準の取り消しを使う
     e.preventDefault();
     if (k === 'y' || e.shiftKey) redo(); else undo();
     return;
   }
-  if (/INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  if (isTextEditing()) return;
   if (e.key === 'Delete' || e.key === 'Backspace') del();
   if (e.key === 'Enter' && ui.drawing) { e.preventDefault(); finishRoad(); return; }   // 確定(ボタンの再発火も止める)
   if (e.key === 'Escape') {
     if (ui.drawing) cancelRoad();
     else if (getBulk().length) { clearBulk(); renderAll(); }   // □選択の解除
     else { ui.tool = 'select'; renderTools(); }
+  }
+  // 矢印キー = 選択中の要素をステップ移動(グリッドONは1マス、OFFは1単位、Shift で5倍 = U4)
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    if (!nudgeFocus()) return;   // 入力中・サイドバー幅ハンドルのフォーカス中は動かさない
+    e.preventDefault();
+    const d = stepOf(e);
+    nudge(e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0,
+          e.key === 'ArrowUp' ? -d : e.key === 'ArrowDown' ? d : 0);
+    return;
+  }
+  // Tab = キャンバスにフォーカスがあるときだけ、要素を順に選ぶ(それ以外は通常のフォーカス移動のまま)
+  if (e.key === 'Tab' && document.activeElement === cv && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    cycleSel(e.shiftKey);
+    return;
   }
   if (e.code === 'Space') {   // Space押下中はドラッグで画面をスクロール
     e.preventDefault();
@@ -413,6 +519,9 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => {
   if (e.code === 'Space') { spaceDown = false; if (!pan) stage.style.cursor = ''; }
 });
+// 矢印の連打や文字入力は 600ms まとめて1回の履歴(deferSave)。その保留が残ったまま
+// 画面を閉じると変更が残らないので、離れる前に確定する(U4)
+window.addEventListener('pagehide', () => save());
 
 /* ---------- 書き出しファイル名(S6) ----------
    JSON は日時を入れて同じ名前のまま保存しにくくする(地図名は使わない:
@@ -601,10 +710,13 @@ function exportImage() {
    BroadcastChannel は「最適化」にすぎないので使わない(同じ経路が2本になり検証が二重になる)。 */
 let remoteRaw = null;   // 保留中の相手の版(文字列のまま。読むとき初めてサニタイズする)
 
+// 入力欄・プルダウン・編集可能領域にフォーカスがあるか。
+// SELECT と contenteditable も見る(以前は INPUT|TEXTAREA のみで、
+// プルダウンにフォーカスしたまま Backspace を押すと選択中の駅が消えていた = U4)
 const isTextEditing = () => {
   const ae = document.activeElement;
   if (!ae || ae === document.body) return false;
-  if (ae.tagName === 'TEXTAREA') return true;
+  if (ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT') return true;
   if (ae.tagName === 'INPUT') return !/^(checkbox|radio|button|submit|reset|range|color|file|image)$/.test(ae.type || 'text');
   return !!ae.isContentEditable;
 };
@@ -641,7 +753,8 @@ function applyRemote(raw) {
     } else if (!curMap().lines.some(l => l.id === ui.line)) { ui.line = curMap().lines[0].id; ui.sel = null; }
     if (ui.home) { renderAll(); return; }
     renderTabs(); renderCanvas();
-    if (!/INPUT/.test(document.activeElement.tagName)) renderSide();
+    // 入力欄・プルダウンの最中は描き直さない(選択や入力がリセットされるため = U4)
+    if (!isTextEditing()) renderSide();
   } catch (err) {}
 }
 

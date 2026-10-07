@@ -116,8 +116,9 @@ let ui = { map, line, sel, tool, open, home, zoom, drawing, bulk, bulkRect, bulk
 | タブ開閉・路線図の新規/削除 | `openMap` L1328・`closeTab` L1333・`newMap` L1342・`deleteMap` L1343 |
 | 別ウィンドウからの取り込み | `storage` L1688(**`S` を丸ごと差し替え、履歴もリセット**) |
 | ツールバーのグループ分け・「?」のショートカット一覧(U3) | `index.html` の `.sep` / `#keyshelp` / `#keyspop` + `renderTools()` の `aria-pressed`(**状態は変えない**) |
+| 矢印キーでの移動 / Tab での選択巡回(U4) | `renderer.js` の `window keydown` → `nudge()` / `cycleSel()`。**`core.*` を呼ぶだけで直接代入はしない**、変更は `deferSave()` でまとめて1回の履歴へ。移動するのは `ui.sel`(□選択のまとめは移動しない)。読み上げ(`announceStatus`)は状態を変えない |
 
-**洗い出しの結果: 状態を変える箇所は上記の3グループ(キャンバス pointerdown/pointermove・編集関数・パネルの input/change/click)に集約されている。** 全数を列挙可能であり、`dispatch` への付け替えは機械的に進められる。
+**洗い出しの結果: 状態を変える箇所は上記の3グループ(キャンバス pointerdown/pointermove・編集関数・パネルの input/change/click)に集約されている。** 全数を列挙可能であり、`dispatch` への付け替えは機械的に進められる。**キーボード経由の操作(U4)も同じく `core.*` と `deferSave()` を通るだけなので、状態を書き換える経路は増えていない。**
 
 ## 5. ID の付け方
 

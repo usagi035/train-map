@@ -158,6 +158,15 @@ export function hitLocked(el) {
   }
   return false;
 }
+// 選択中の要素が「編集できない」路線のものか(DOM ではなく選択情報で見る = キーボード操作用)
+// hitLocked(el) と同じ判定を、ui.sel の形で行う
+export function selLocked(sel) {
+  if (!sel) return false;
+  const m = curMap();
+  if (sel.t === 'st') { const s = findStation(sel.id); return !s || isStationLocked(s); }
+  if (sel.t === 'cx') { const o = m.lines.find(x => x.crossings.some(c => c.id === sel.id)); return !!o && !!o.lock; }
+  return false;
+}
 // 表示設定を変えたあと、選択中の要素がまだ見えているか
 export function selVisible(sel) {
   if (!sel) return true;
@@ -224,6 +233,36 @@ export function pickInBox(m, b) {
   });
   return hit;
 }
+/* ---------- 読み上げ(U4) ----------
+   ツールの切り替えと選択の変化を、見た目を隠したライブリージョン(#live)へ流す。
+   - 同じ文言は流さない(ドラッグ中の再描画で読み上げ続けないため)。
+   - 文字は必ず textContent(CSP と同じ理由: 動かすのは DOM の値だけ)。 */
+let said = '';
+export function announce(text) {
+  if (!text || text === said) return;
+  said = text;
+  const el = document.getElementById('live');
+  if (el) el.textContent = text;
+}
+// 選択中の要素を人が読める言葉にする(読み上げと自動テストで使う)
+export function selLabel(sel) {
+  if (!sel) return '';
+  const m = curMap();
+  if (sel.t === 'st') { const s = findStation(sel.id); return s ? '「' + s.name + '」を選択中' : ''; }
+  if (sel.t === 'stop') { const s = (m.stops || []).find(x => x.id === sel.id); return s ? '「' + s.name + '」を選択中' : ''; }
+  if (sel.t === 'cx') return '踏切を選択中';
+  if (sel.t === 'bx') return 'ラベル枠を選択中';
+  if (sel.t === 'img') return '画像を選択中';
+  if (sel.t === 'road') return '幹線道路を選択中';
+  return '要素を選択中';
+}
+export function announceStatus() {
+  const b = document.querySelector('[data-tool="' + ui.tool + '"]');
+  const tool = b ? b.textContent.trim() : ui.tool;
+  const bulk = getBulk().length;
+  announce(tool + ' / ' + (bulk ? bulk + '件をまとめて選択中' : (selLabel(ui.sel) || '選択なし')));
+}
+
 export function renderTools() {
   document.querySelectorAll('[data-tool]').forEach(b => {
     const on = b.dataset.tool === ui.tool;
@@ -233,6 +272,7 @@ export function renderTools() {
   document.getElementById('hint').textContent = HINTS[ui.tool] || '';
   document.getElementById('cv').style.cursor = ui.tool === 'select' ? 'default' : 'crosshair';
   updateUndoButtons();
+  announceStatus();   // ツールと選択の変化を支援技術へ知らせる(U4)
 }
 /* ---------- 再描画(画面の各モジュールが自分の描画関数を登録する) ---------- */
 const parts = {};   // { tabs, home, canvas, side, left }

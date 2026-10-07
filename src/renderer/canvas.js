@@ -198,11 +198,13 @@ export function renderCanvas() {
   document.getElementById('cv').innerHTML = h;
 }
 
-export function centerStation(s) {
+// その座標が画面の中央に来るようスクロールする(Tab で選択を移したときにも使う = U4)
+export function centerOn(x, y) {
   const st = document.getElementById('stage');
-  st.scrollLeft = (s.x + 4) * ui.zoom - st.clientWidth / 2;
-  st.scrollTop = (s.y + 4) * ui.zoom - st.clientHeight / 2;
+  st.scrollLeft = (x + 4) * ui.zoom - st.clientWidth / 2;
+  st.scrollTop = (y + 4) * ui.zoom - st.clientHeight / 2;
 }
+export function centerStation(s) { centerOn(s.x, s.y); }
 
 export const cv = document.getElementById('cv'), stage = document.getElementById('stage');
 export const pt = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / ui.zoom, y: (e.clientY - r.top) / ui.zoom }; };

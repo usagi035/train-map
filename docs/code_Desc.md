@@ -142,6 +142,7 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 ### DOM 構造
 
 ```html
+<div id="live">              … 読み上げ領域(見た目は隠す1×1、role=status / aria-live=polite)  ← announce()
 <header>
   <div id="tabs">            … 路線図タブ + 「＋」(追加) + 「一覧」     ← renderTabs()
   <div id="tools">           … ツールバー(グループごとに `.sep` で区切る = U3)。
@@ -155,7 +156,8 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
     <aside id="quick">       …   下: クイック操作パネル(高さ固定)      ← renderQuick()
   </div>
   <div class="split" id="splleft">  … 左サイドバーの幅ハンドル(7px)
-  <div id="stage"><svg id="cv"> … 描画キャンバス(SVG)                    ← renderCanvas()
+  <div id="stage"><svg id="cv"> … 描画キャンバス(SVG)。`role="application"` + `tabindex="0"` + `aria-label`
+                                 = キーボード(U4)の入口。クリックでフォーカスを得る    ← renderCanvas()
   <div class="split" id="splright"> … 右サイドバーの幅ハンドル(7px)
   <aside id="side">          … 右パネル: 設定(6グループ)                  ← renderSide()
   <div id="home">            … 路線図の一覧画面                          ← renderHome()
@@ -318,6 +320,8 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `showEl(m, k)` | 種類(road/stop/box/img)が表示中か。`m.show` が無ければ全て表示 |
 | `isStationLocked(s)` | 駅が属する**路線のどれかがロック中**ならロック |
 | `hitLocked(el)` | クリック対象(SVG要素)がロック中の駅/踏切なら true(選択・操作を拒否) |
+| `selLocked(sel)` | `hitLocked` と同じ判定を **DOM ではなく `ui.sel` の形**で(キーボード移動の入口 = U4) |
+| `announce(text)` / `selLabel(sel)` / `announceStatus()` | 選択とツールの変化を `#live`(読み上げ領域)へ流す。**同じ文言は流さない**(ドラッグ中の再描画で読み上げ続けない)。文字は必ず `textContent`(U4) |
 | `selVisible(sel)` | 表示設定を変えた後も選択中の要素が見えているか(駅は「路線外なら常に表示」) |
 | `lineEditBlocked()` | 現在の路線がロック/非表示なら **理由付き alert** を出して true |
 | `pickInBox(m, b)` | 矩形に重なる要素を集める。**非表示・ロック中の路線、非表示の種類は除外**、重複IDは排除 |
@@ -328,7 +332,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | --- | --- |
 | `renderTabs()` | タブ行を生成(選択中 `.on`、✕、`＋`、`一覧`) |
 | `renderHome()` | 路線図一覧(開く/削除/新しい路線図) |
-| `renderTools()` | ツールボタンの `.on` 切替 + **`aria-pressed`(「いま押しているモード」= U3)**、ヒント文、カーソル、Undo/Redo 有効化 |
+| `renderTools()` | ツールボタンの `.on` 切替 + **`aria-pressed`(「いま押しているモード」= U3)**、ヒント文、カーソル、Undo/Redo 有効化、**`announceStatus()`(ツールと選択を読み上げ領域へ = U4)** |
 | **`renderCanvas()`** | SVG を文字列生成で**全書き換え**。順序: 背景+グリッド → 画像(背面/back) → ラベル枠 → 幹線道路 → 描画中プレビュー → 踏切の道路バー → **線路+駅間隔の数字** → 踏切記号 → **接続線(1本化)** → **駅** → バス停 → 画像(前面/front) → □選択の枠とハイライト。非表示路線・非表示種類は描かない。選択中は破線の枠とリサイズ用 ■ を足す |
 | └ 内部 `drawImages(zone)` | 画像要素の描画。**back かつ非選択のみ `pointer-events:none`**(下の要素を選べるように) |
 | └ 内部 `drawStation(s, l)` | 駅の形(丸/二重丸/四角/ひし形)・ハブの点線・選択枠・駅名(`nameX/nameY/nameRot` 回転) |
@@ -387,7 +391,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `finishBand()` | 動かさなかったクリックなら路線選択のみ。動かしていれば `pickInBox` で複数選択(`ui.bulk` に設定) |
 | `window pointermove`(drawing) | 道路描画中の予告線(`hover`)。タッチ(`pointerType==='touch'`)は除外 |
 | `cv dblclick` | 道路のダブルクリックで確定(タッチは**ダブルタップ** = 320ms以内の連続タップ) |
-| `window keydown` | **Alt+W**=タブ閉じる(`e.code === 'KeyW'`。Ctrl+W/Cmd+W はブラウザが先に掴むため) / **Ctrl+Z・Ctrl+Y(Ctrl+Shift+Z)**=undo/redo(テキスト欄中は除く) / **Delete・Backspace**=削除 / **Enter**=道路確定 / **Esc**=道路中止→□解除→selectに戻る / **Space**=押下中はパンモード |
+| `window keydown` | **Alt+W**=タブ閉じる(`e.code === 'KeyW'`。Ctrl+W/Cmd+W はブラウザが先に掴むため) / **Ctrl+Z・Ctrl+Y(Ctrl+Shift+Z)**=undo/redo / **Delete・Backspace**=削除 / **Enter**=道路確定 / **Esc**=道路中止→□解除→selectに戻る / **Space**=押下中はパンモード / **矢印**=選択中の要素をステップ移動、**Tab**=キャンバス内だけで要素を巡回(U4)。※ 入力の判定は `isTextEditing()`(INPUT・TEXTAREA・**SELECT**・**contenteditable**)に一本化 = 以前の `INPUT\|TEXTAREA` 判定ではプルダウンにフォーカスしたまま Backspace を押すと駅が消えていた(U4 の修正)。`undo()`/`redo()` は先に `save()` で保留中の変更(矢印の連打)を積んでから戻す |
 | `window keyup` | Space 解除 |
 
 #### ツールバー・ファイル
