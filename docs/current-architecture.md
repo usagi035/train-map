@@ -44,7 +44,7 @@ train/
 | セキュリティ設定 | `contextIsolation: true` / `nodeIntegration: false`(`main.js` L8) |
 | CSP | `index.html` L5:`default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'` |
 | 複数ウィンドウ | Renderer が `window.open('index.html#<mapId>')` で開く。Main は `setWindowOpenHandler` でサイズだけ指定 |
-| 別ウィンドウ間の同期 | 同一 `localStorage` + `storage` イベント(`renderer.js` L1688) |
+| 別ウィンドウ間の同期 | 同一 `localStorage` + `storage` イベント(`renderer.js` L1688)。Web 版は作業中なら上書きせずバナーで選ばせる(S4) |
 | キーボード | Main の `before-input-event` が Ctrl+W を横取りし、Renderer の `window.__closeTab()` を呼ぶ(`main.js` L20-30) |
 
 → WebRTC / WebSocket は **Renderer の標準 API だけで足りる**(`nodeIntegration` を開ける必要は無い)。仕様6.2の前提と一致。
@@ -153,7 +153,9 @@ const uid = () => Math.random().toString(36).slice(2, 9);   // renderer.js L25
 - `window.open('index.html#<mapId>')` で**別ウィンドウ**。hash があるウィンドウはその路線図だけを開く(L91-92)。
 - 開いているタブは `localStorage('train-map:v1:open')` に記憶(`persistOpen()` L1301)。開閉状態は `train-map:v1:acc`。
   キー一覧は `src/renderer/storage.js`(旧 `railmaps` 等からは起動時に `migrateLegacyKeys()` が移行、旧キーは残す)。
-- **別ウィンドウ同士は同一 localStorage を使い、`storage` イベントで常に最新を全面的に取り込む**(L1688)。取り込み時に履歴はリセット。
+- **別ウィンドウ同士は同一 localStorage を使い、`storage` イベントで最新を取り込む**(L1688)。取り込み時に履歴はリセット。
+  Web 版では**相手の保存が届いても、こちらに未確定の作業(入力中・ドラッグ中・自動保存の保留)がある間は上書きせず**、
+  画面上部のバナーで「相手の版を読み込む / 自分の版を残す」を選ばせる(S4)。
 - 終了時: **保存用のフックは存在しない**。`save()` が編集ごとに都度書き込んでいるため、ウィンドウを閉じてもデータは最後の `save()` のまま(失われるものはない)。**閉じる前の確認ダイアログは無い**(未保存=蓄積された履歴のみ)。
 - 未コミットの編集は基本発生しない(`save()` が必ず走るため)。
 

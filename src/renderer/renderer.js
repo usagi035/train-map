@@ -8,12 +8,14 @@ import { core, ui, replaceUi, esc, curMap, curLine, findStation, linesOf, viewNo
          setRender,
          save, getBulk, clearBulk, rectOf, pickInBox, isStationLocked, hitLocked, lineEditBlocked,
          snapOn, autoselOn, snapPt, renderAll, renderTools, del, cancelRoad, finishRoad, startRoadDrawing,
-         addRoadPoint, updateRoadHint, imgPick } from './ui-state.js';
+         addRoadPoint, updateRoadHint, imgPick,
+         keepLocalVersion, clearLocalAuthority, shouldAskRemote } from './ui-state.js';
 import { cv, stage, pt, setZoom, renderCanvas, setBandSource } from './canvas.js';
 import { renderSide } from './side-panel.js';
 import { renderLeft } from './left-panel.js';
 import { renderTabs, renderHome, persistOpen } from './tabs.js';
 import { KEYS } from './storage.js';
+import { setBanner, clearBanner, hasBanner } from './banner.js';
 
 // 履歴のスナップを画面へ適用する(表示中の路線図・路線を、そのときのものへ合わせ直す)
 function applySnap(e) {
@@ -363,6 +365,7 @@ document.getElementById('file').addEventListener('change', e => {
       const warns = core.importDocument(d);   // 形式が違うデータは例外を投げる(下でまとめて案内する)
       if (warns && warns.length) console.warn('読み込んだデータで直した項目:', warns);
       replaceUi({ map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: ui.zoom, drawing: null }); persistOpen();
+      dropRemote();   // 文書を入れ替えたので、いま出ている「別タブの変更」は無効(S4)
       save(); renderAll();
     } catch (err) { alert('読み込めませんでした。書き出したJSONファイルを選んでください。'); }
   };
@@ -449,15 +452,46 @@ function exportImage() {
   img.src = 'data:image/svg+xml;base64,' + svg64;
 }
 
-// 別ウィンドウでの変更を取り込む
-window.addEventListener('storage', e => {
-  if (e.key !== KEYS.maps || !e.newValue || drag) return;
+/* ---------- 別ウィンドウとの同期(S4) ----------
+   相手の保存が届いても、こちらに未確定の作業(入力中・ドラッグ中・道路描画中・自動保存の保留)
+   がある間は上書きしない。バナーでどちらを使うかを選ばせる。
+   ・「相手の版を読み込む」= サニタイズを通した相手の版を適用して履歴をリセット
+   ・「自分の版を残す」     = 次にこちらの保存が成功するまで相手の版を受け取らない
+     (次の保存で上書きされる = ユーザーが選んだ結果)
+   BroadcastChannel は「最適化」にすぎないので使わない(同じ経路が2本になり検証が二重になる)。 */
+let remoteRaw = null;   // 保留中の相手の版(文字列のまま。読むとき初めてサニタイズする)
+
+const isTextEditing = () => {
+  const ae = document.activeElement;
+  if (!ae || ae === document.body) return false;
+  if (ae.tagName === 'TEXTAREA') return true;
+  if (ae.tagName === 'INPUT') return !/^(checkbox|radio|button|submit|reset|range|color|file|image)$/.test(ae.type || 'text');
+  return !!ae.isContentEditable;
+};
+const localBusy = () => !!drag || !!ui.drawing || isTextEditing();
+
+function askRemote(raw) {
+  remoteRaw = raw;
+  setBanner('sync', '別のタブでこの路線図が変更されました。どちらを使うか選んでください。', [
+    { label: '相手の版を読み込む', onClick: loadRemote },
+    { label: '自分の版を残す', onClick: keepLocalVersion }
+  ]);
+}
+function loadRemote() {
+  const raw = remoteRaw;
+  remoteRaw = null;
+  clearLocalAuthority();
+  if (raw) applyRemote(raw);
+}
+// 保留していた相手の版を捨てる(JSONの読み込みなどで文書を入れ替えたとき)
+function dropRemote() { remoteRaw = null; clearBanner('sync'); }
+// 相手の版を取り込む(保存ボタンと同じ入口 = サニタイズ + 移行)
+function applyRemote(raw) {
   try {
-    const d = JSON.parse(e.newValue);
-    // 保存文字列も読み込みと同じ入口でサニタイズ + 移行する(不正なら例外 → 下で黙って無視)
+    const d = JSON.parse(raw);
     const syncWarnings = core.importDocument(d);
     if (syncWarnings.length) console.warn('タブ間同期で直した項目:', syncWarnings);
-    // 別ウィンドウの変更を取り込んだ時点で履歴をリセット
+    // 相手の変更を取り込んだ時点で履歴をリセット
     core.resetHistory(viewNow());
     updateUndoButtons();
     ui.open = ui.open.filter(id => S.maps.some(m => m.id === id));
@@ -469,6 +503,13 @@ window.addEventListener('storage', e => {
     renderTabs(); renderCanvas();
     if (!/INPUT/.test(document.activeElement.tagName)) renderSide();
   } catch (err) {}
+}
+
+window.addEventListener('storage', e => {
+  if (e.key !== KEYS.maps || !e.newValue) return;
+  // 決着していない競合がある間は自動適用せず、バナーの中身だけ最新の相手の版へ入れ替える
+  if (hasBanner('sync') || shouldAskRemote(localBusy())) { askRemote(e.newValue); return; }
+  applyRemote(e.newValue);
 });
 
 /* ---------- サイドバーの幅(ドラッグで変更・localStorage に記憶) ----------

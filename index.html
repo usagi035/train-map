@@ -137,6 +137,17 @@
   .linklist .badge { flex:none; font-size:10px; font-weight:700; color:#2f7d64; background:#e3efe9; border-radius:3px; padding:1px 5px; }
   .linklist svg { flex:none; }
   #hint { position:fixed; left:calc(var(--lw, 400px) + 17px); bottom:10px; background:var(--ink); color:#fff; padding:6px 12px; border-radius:5px; font-size:12px; pointer-events:none; }
+  /* 非ブロッキングの案内バナー(src/renderer/banner.js)。S4=タブ間の競合、S5=自動保存の失敗 */
+  #banners { position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:90;
+             display:flex; flex-direction:column; gap:6px; align-items:center;
+             width:max-content; max-width:calc(100vw - 24px); pointer-events:none; }
+  .banner { pointer-events:auto; display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap;
+            background:var(--ink); color:#fff; padding:8px 12px; border-radius:6px;
+            font-size:12.5px; box-shadow:0 4px 12px rgba(0,0,0,.25); }
+  .banner button { font:inherit; font-size:12.5px; font-weight:700; padding:4px 11px; border:1px solid #fff;
+                   background:#fff; color:var(--ink); border-radius:5px; cursor:pointer; }
+  .banner button:hover { background:#e9f2ee; }
+  .banner.warn { background:#8a2b1c; }
 </style>
 </head>
 <body>

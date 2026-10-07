@@ -78,7 +78,7 @@ export const save = () => {
   clearTimeout(saveTimer); saveTimer = 0;
   const now = core.commit(viewNow());   // 変化が無ければ null(そのときは保存もしない)
   if (!now) return;
-  try { localStorage.setItem(KEYS.maps, now); } catch (e) {
+  try { localStorage.setItem(KEYS.maps, now); localAuthority = false; } catch (e) {
     // 保存できないと黙っていると消えてしまうので注意を出す(画像を取り込むと容量上限に当たりやすい)
     console.warn('自動保存に失敗しました:', e);
     if (!quotaWarned) {
@@ -93,6 +93,18 @@ export const deferSave = () => {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => { saveTimer = 0; save(); }, 600);
 };
+/* ---------- 別タブとの競合(S4) ----------
+   「自分の版を残す」を選ぶと、次に自分の保存が成功するまで相手の版を自動適用しない
+   (選んだ直後に自分の変更が上書きされないようにする)。保存が成功したら通常の同期に戻る。 */
+let localAuthority = false;
+export const keepLocalVersion = () => { localAuthority = true; };
+export const clearLocalAuthority = () => { localAuthority = false; };
+export const isLocalAuthority = () => localAuthority;
+// 自動保存が保留中か(= まだ保存していない変更がある)
+export const pendingSave = () => saveTimer !== 0;
+// 相手の版で上書きしてよいかの判定。busy は「ドラッグ中・道路描画中・入力中」のこと。
+// どれか一つでも当てはまれば、バナーでどちらを使うか選ばせる。
+export const shouldAskRemote = (busy = false) => !!(busy || pendingSave() || localAuthority);
 // 読み込んだ文書ごとに画面の状態をまとめて入れ替える(JSONの読み込み・別ウィンドウとの同期で使う)
 export function replaceUi(next) { ui = next; }
 core.resetHistory(viewNow());

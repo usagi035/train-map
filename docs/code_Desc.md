@@ -16,6 +16,7 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
        └─ <script type="module" src="./src/renderer/renderer.js"> … 画面側の入口
             ├─ renderer/ui-state.js … 共通状態・共通操作・renderAll(各画面モジュールはここからのみ import)
             ├─ renderer/{canvas,side-panel,left-panel,tabs}.js … 描画と各画面の操作
+             ├─ renderer/{storage,banner}.js … 保存キーの管理(S3)/ 案内バナー(S4・S5)
             ├─ core/{model,geometry,migration,sanitize,history,operations}.js … 画面に依存しない操作(createCore)
             ├─ 起動時: migrateLegacyKeys()(旧キー→名前空間つきキー) → localStorage('train-map:v1:maps') 読込 → sanitizeDocument() → migrate() → importDocument → renderAll()
             ├─ 編集のたびに save() … 履歴に積み + localStorage へ書く
@@ -41,8 +42,10 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
 > 旧キーの削除タイミングは `storage.js` の `LEGACY` 付近の TODO(次に保存形式を変えるリリース)。
 > 同じオリジンには他の公開物も置けるので、短く汎用的なキー名は使わない。
 
-> **注意**: 同じブラウザで複数タブを開くと、最後に保存した側が勝つ(上書き競合)。これを防ぐ仕組みは無いので、
-> 保存のたびに発火する `storage` イベント(§5.14)で変更を互いに取り込む。単一インスタンスロックの代わりの制御。
+> **注意**: 同じブラウザで複数タブを開くと、最後に保存した側が勝つ(上書き競合)。保存のたびに発火する
+> `storage` イベント(§5.14)で変更を互いに取り込む(単一インスタンスロックの代わりの制御)。
+> **こちらに未確定の作業がある間は相手の版で上書きせず、バナーで「相手の版を読み込む / 自分の版を残す」を
+> 選ばせる**(S4)。どちらも選ばないと勝手に決めない。
 
 ---
 
@@ -58,6 +61,8 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
 | `src/core/history.js` | Undo/Redo のスナップ管理(`init` / `push` / `undo` / `redo`) |
 | `src/core/operations.js` | 追加・削除・移動などの操作と `createCore()`。**画面側が core に触れる唯一の入口** |
 | `src/renderer/ui-state.js` | 画面側の共通状態・共通操作(`ui` / `save` / `renderAll` / □選択 / レイヤー判定 / 道路描画 / 削除)。**他の画面モジュールはここからのみ import する** |
+| `src/renderer/storage.js` | localStorage のキー一覧(`NS` / `KEYS`)と旧キーからの移行 `migrateLegacyKeys()`(§2、S3) |
+| `src/renderer/banner.js` | 非ブロッキングの案内バナー(`setBanner` / `clearBanner` / `hasBanner`)。S4=タブ間競合、S5=自動保存失敗で使う |
 | `src/renderer/canvas.js` | SVG の描画(`renderCanvas`)とズーム・スクロール(`pt` / `applyZoom` / `setZoom` / `centerStation`) |
 | `src/renderer/side-panel.js` | 右パネルの描画(`renderSide` / `sec`)と、左のクイック操作パネル(`renderQuick`)。イベントは `#side` と `#quick` の両方へ登録 |
 | `src/renderer/left-panel.js` | 左パネルの描画(`renderLeft` / `stationGlyph`)と駅の並べ替え |
@@ -125,7 +130,7 @@ Image { id, src(data URL), x, y, w, h, opacity, z: 'back'|'front' }
 | `index.html`(ルート直下) | エントリ。DOM 構造 + すべての CSS + CSP。`<script type="module" src="./src/renderer/renderer.js">` で画面側を起動。`src/ui/` からルートへ移した(パスは `./src/renderer/…` に修正しただけ) |
 | 開発 | `npm start` → `scripts/serve.cjs` がリポジトリ直下を配信(`PORT` で変更可)。依存パッケージ無しだが、任意の静的サーバーでも同じ |
 | 公開 | `dist/` 等のビルド出力は無く、**リポジトリ直下そのものが配信物**。GitHub Pages 等の静的ホスティングにそのまま接続できる |
-| 複数タブ | 起動の排他制御は無い(同一 origin の localStorage を共有)。変更は `storage` イベント(§5.14)で互いに取り込む |
+| 複数タブ | 起動の排他制御は無い(同一 origin の localStorage を共有)。変更は `storage` イベント(§5.14)で互いに取り込む。**作業中に相手の保存が来たら上書きせず、バナーで選ばせる(S4)** |
 | `window.open('index.html#…')`(「別ウィンドウで開く」) | ブラウザでは**別タブ**として開く。`location.hash` でその路線図だけを開く(`hm`) |
 | タブを閉じるキー | **`Alt + W`**(`renderer.js` の keydown)。`Ctrl+W` / `Cmd+W` はブラウザが先に掴むため取得できない。`e.code === 'KeyW'` で配列・OS に依存せず判定 |
 
@@ -457,7 +462,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 
 | 箇所 | 動作 |
 | --- | --- |
-| `window 'storage'` | 別ウィンドウが `train-map:v1:maps` を書き換えたら取り込む(**ドラッグ中は無視**)。取り込みは**保存ボタンと同じ入口**を通す(= `sanitizeDocument()` → `migrate()`。壊れた中身は例外 → `catch` で無視)。取り込み時に**履歴はリセット**、開いているタブ/路線を有効な範囲に補正。`renderTabs`+`renderCanvas`、**入力欄にフォーカスがある間は `renderSide()` しない**(打ちかけの入力を消さないため) |
+| `window 'storage'` | 別ウィンドウが `train-map:v1:maps` を書き換えたら受け取る。**こちらに未確定の作業(入力中・ドラッグ中・道路描画中・自動保存の保留)がある、または競合が決着していない間は適用せず**、バナー(`banner.js`)で「相手の版を読み込む / 自分の版を残す」を選ばせる(S4)。適用(`applyRemote`)は**保存ボタンと同じ入口**を通す(= `sanitizeDocument()` → `migrate()`。壊れた中身は例外 → `catch` で無視)。取り込み時に**履歴はリセット**、開いているタブ/路線を有効な範囲に補正。`renderTabs`+`renderCanvas`、**入力欄にフォーカスがある間は `renderSide()` しない**(打ちかけの入力を消さないため)。「自分の版を残す」を選ぶと次に自分の保存が成功するまで相手の版を受け取らない。JSONを読み込んで文書を入れ替えたときは保留分を捨てる(`dropRemote`) |
 
 ---
 
