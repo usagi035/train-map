@@ -12,6 +12,13 @@ export const core = createCore();
 // HTMLエスケープ(画面表示のための都合なので core には置かない)
 export const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+/* 出口側の縦の防御(S1b)。読み込み時の検証(sanitize.js)とは別に、
+   テンプレートへ入れる直前でもう一度「値の形」を確かめる。
+   正当なデータならすべて素通りする(表示は変わらない)。 */
+export const col = c => (/^#[0-9a-fA-F]{6}$/.test(c) ? c : '#000000');      // 色(#rrggbb 以外は黒)
+export const num = n => (Number.isFinite(n) ? n : 0);                        // 数値(数値以外は0)
+export const idf = s => (typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s) ? s : '');   // ID(文字列で規則外は空文字)
+
 export const HINTS = {
   select:   '駅・バス停・道路をドラッグして移動 / 空白をドラッグして□で複数選択→Deleteで一括削除 / Deleteキーで削除 / Space+ドラッグで画面移動',
   station:  'クリックで駅を追加(線の上なら間に挿入) / 既存の駅をクリックすると追加せず、選択・移動へ自動で切り替わる',

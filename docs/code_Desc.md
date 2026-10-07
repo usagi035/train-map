@@ -230,6 +230,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 | `HINTS` | ツールごとのヒント文(select/station/hub/crossing/busstop/terminal/road/box) |
 | `newId()` | ID生成(`crypto.randomUUID`。旧 `uid()` から変更) |
 | `clamp(v,a,b)`, `esc(s)` | 数値クランプ / HTMLエスケープ |
+| `col(c)`, `num(n)`, `idf(s)` | **表示直前の縦の防御(S1b)**(`ui-state.js` で `esc` の隣に定義)。色は `#rrggbb` 以外を黒へ、数値でない値は 0 へ、ID規則外は空文字へ。カタログ・キャンバス等のテンプレートに入れる値はすべてこれを経由する |
 | `mkLine/mkRoad/mkBusStop/mkMap/mkStation/mkImage` | 各オブジェクトの生成(既定値入り) |
 | `lw(l)` | 路線の太さ(`width \|\| 8`) |
 | `isDark(hex)` | 背景色が暗いか(文字色・グリッド色の選択に使用) |
@@ -506,5 +507,9 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
       IDは `[A-Za-z0-9_-]{1,64}` かつ一意(作り直したらリンク参照も追従)、列挙値は許可リスト、
       画像の `src` は `data:image/(png|jpeg|webp|gif);base64,…` のみ。
     - **直せるものは直して通す**(件数超過は切り詰めて `warnings`、`invalid document` は地図が1件も無いときだけ)。
+    - **出口側も縦に防御(S1b)** — `esc()` に加えて `col()` / `num()` / `idf()` を、データを入れるテンプレートに
+      必ず通す(色→`col`、数値→`num`、ID→`idf`)。取り込みの検証が素通りしても、属性に意図しない文字列が
+      入らないようにする。**算術(`x - 3`)は数値へ強制されるため安全**、**連結(`x + w / 2`)は文字列になる**
+      という差に注意して、連結側は先に `num()` で揃えている。
     - 起動時に入れ直せないときは初期状態で始めるが、**保存文字列はユーザーが編集するまで書き換えない**。
     - 受入テストは `test/sanitize.test.js`(`npm test`)、手動確認用の不正JSONは `test/hostile/`。

@@ -3,17 +3,17 @@
    (元は src/ui/renderer.js の1ファイル。指示書 §8〜§12 に沿って画面側を分割した)
    =========================================================================== */
 import { S } from '../core/model.js';
-import { core, ui, esc, curMap, viewNow, save, renderAll } from './ui-state.js';
+import { core, ui, esc, idf, curMap, viewNow, save, renderAll } from './ui-state.js';
 
 export function renderTabs() {
   document.getElementById('tabs').innerHTML =
     ui.open.map(id => S.maps.find(m => m.id === id)).filter(Boolean).map(m =>
-      `<div class="tab ${m.id === ui.map && !ui.home ? 'on' : ''}"><span data-id="${m.id}">${esc(m.name)}</span><button class="x" data-x="${m.id}" title="閉じる (Alt+W)" aria-label="閉じる">✕</button></div>`).join('') +
+      `<div class="tab ${m.id === ui.map && !ui.home ? 'on' : ''}"><span data-id="${idf(m.id)}">${esc(m.name)}</span><button class="x" data-x="${idf(m.id)}" title="閉じる (Alt+W)" aria-label="閉じる">✕</button></div>`).join('') +
     '<button id="addmap" title="路線図を追加">＋</button><button id="listbtn" title="路線図の一覧">一覧</button>';
 }
 export function renderHome() {
   document.getElementById('home').innerHTML = '<h2>路線図</h2><ul>' +
-    S.maps.map(m => `<li><span>${esc(m.name)}</span><span class="st">${ui.open.includes(m.id) ? '開いています' : ''}</span><button data-open="${m.id}">開く</button><button data-del="${m.id}">削除</button></li>`).join('') +
+    S.maps.map(m => `<li><span>${esc(m.name)}</span><span class="st">${ui.open.includes(m.id) ? '開いています' : ''}</span><button data-open="${idf(m.id)}">開く</button><button data-del="${idf(m.id)}">削除</button></li>`).join('') +
     '</ul><button id="hnew">新しい路線図</button>';
 }
 
