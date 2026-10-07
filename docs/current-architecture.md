@@ -126,7 +126,7 @@ const uid = () => Math.random().toString(36).slice(2, 9);   // renderer.js L25
 
 ## 6. ファイル形式
 
-- **保存先は `localStorage('train-map:v1:maps')`**、値は `JSON.stringify(S)`。エクスポートは同じ構造の `railmaps.json`(`#exp` L1225)。
+- **保存先は `localStorage('train-map:v1:maps')`**、値は `JSON.stringify(S)`。エクスポートは同じ構造で、ファイル名は日時入り `railmaps-YYYYMMDD-HHmm.json`(`#exp`)。PNG の名前は地図名を `safeFilename()` で加工したもの(S6②)。
   **保存に失敗したら黙らない**: `setSaveFailed(true)` で赤い常駐バナー(「書き出し」付き)+ `beforeunload` を張り、
   次の保存が成功するまで解除しない(S5)。
 - 構造: `{ maps: [ { id, name, bg, w, h, lines[], roads[], stops[], hubs[], boxes[], images[], show{} } ] }`

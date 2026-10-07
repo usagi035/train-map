@@ -4,7 +4,7 @@
    =========================================================================== */
 import { S, G, mw, mh, clamp, mkMap, findStationIn, linesOfIn, lw, isDark, BG, SHAPES } from '../core/model.js';
 import { dist } from '../core/geometry.js';
-import { LIMITS } from '../core/sanitize.js';
+import { LIMITS, safeFilename } from '../core/sanitize.js';
 import { core, ui, replaceUi, esc, curMap, curLine, findStation, linesOf, viewNow, updateUndoButtons,
          setRender,
          save, getBulk, clearBulk, rectOf, pickInBox, isStationLocked, hitLocked, lineEditBlocked,
@@ -336,6 +336,17 @@ window.addEventListener('keyup', e => {
   if (e.code === 'Space') { spaceDown = false; if (!pan) stage.style.cursor = ''; }
 });
 
+/* ---------- 書き出しファイル名(S6) ----------
+   JSON は日時を入れて同じ名前のまま保存しにくくする(地図名は使わない:
+   同じ名前が並ぶと上書きしてしまい、いつの版か分からなくなるため)。
+   PNG は地図名を使うが、入力値はそのまま使わず `safeFilename()` で
+   ファイル名に使える文字だけ残す。 */
+const stamp = () => {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+};
+const jsonFileName = () => `railmaps-${stamp()}.json`;
+
 /* ---------- toolbar / tabs ---------- */
 document.getElementById('tools').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -357,7 +368,7 @@ document.getElementById('tools').addEventListener('click', e => {
   if (b.id === 'exp') {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(core.getState(), null, 2)], { type: 'application/json' }));
-    a.download = 'railmaps.json'; a.click(); URL.revokeObjectURL(a.href);
+    a.download = jsonFileName(); a.click(); URL.revokeObjectURL(a.href);
   }
   if (b.id === 'expimg') exportImage();
 });
@@ -471,7 +482,7 @@ function exportImage() {
       if (!blob) return;
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = (curMap().name || '路線図') + '.png';
+      a.download = safeFilename(curMap().name) + '.png';
       a.click();
       URL.revokeObjectURL(a.href);
     }, 'image/png');

@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const LIMITS = (await import('../src/core/sanitize.js')).LIMITS;
+const { safeFilename } = await import('../src/core/sanitize.js');
 const rsrc = readFileSync(new URL('../src/renderer/renderer.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
@@ -61,4 +62,30 @@ test('S6-4 上限を超えたときに読まない・描かない分岐が実際
   for (const k of ['IMG_TYPES.indexOf', 'LIMITS.imageFileBytes', 'LIMITS.imagePixels']) {
     assert.ok(body.includes(k), `取り込み関数内に ${k} が無い`);
   }
+});
+
+/* ---------- S6②: 書き出しファイル名と referrer ---------- */
+
+test('S6-5 safeFilename は区切り記号・制御文字を落とし、80文字までにする', () => {
+  assert.equal(safeFilename('路線図/1:あ*い?"<>|\\'), '路線図1あい', 'OSの区切り記号が残っている');
+  assert.equal(safeFilename('a' + String.fromCharCode(0) + 'b' + String.fromCharCode(31) + 'c'), 'abc', '制御文字が残っている');
+  assert.equal(safeFilename('名前. '), '名前', '末尾の「.」「空白」が残っている');
+  assert.equal(safeFilename('  あ い  '), 'あ い', '空白のまとめが違う');
+  assert.equal(safeFilename('あ'.repeat(100)).length, 80, '80文字に収めていない');
+  assert.equal(safeFilename(''), '路線図', '空を空のまま返している');
+  assert.equal(safeFilename(null), '路線図', 'null のときの代替名が無い');
+  assert.equal(safeFilename('   '), '路線図', '空白だけのときの代替名が無い');
+  assert.equal(safeFilename('サンプル路線図'), 'サンプル路線図', '日本語が残らない');
+});
+
+test('S6-6 書き出しは「日時入りJSON」+「地図名は safeFilename 経由」、referrer は no-referrer', () => {
+  // JSON: railmaps-YYYYMMDD-HHmm.json(地図名は使わない = 上書きで版が分からなくなるのを防ぐ)
+  assert.match(rsrc, /const jsonFileName = \(\) => `railmaps-\$\{stamp\(\)\}\.json`;/, 'JSONのファイル名が指定形式でない');
+  assert.match(rsrc, /a\.download = jsonFileName\(\)/, 'JSON書き出しがファイル名ヘルパを使っていない');
+  assert.ok(!/a\.download = 'railmaps\.json'/.test(rsrc), '固定名 railmaps.json が残っている');
+  // PNG: 地図名(入力値)は必ず safeFilename を通す
+  assert.match(rsrc, /a\.download = safeFilename\(curMap\(\)\.name\) \+ '\.png'/, 'PNGの名前が未加工');
+  assert.ok(!/a\.download = \(curMap\(\)\.name \|\| '路線図'\)/.test(rsrc), '地図名をそのまま使っている');
+  // 外部へ送る参照情報を出さない
+  assert.match(html, /<meta name="referrer" content="no-referrer">/, 'referrer meta が無い');
 });
