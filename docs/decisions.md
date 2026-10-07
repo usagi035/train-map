@@ -248,3 +248,32 @@
   `#left` のみ `overflow:auto`(スクロール量 68px)。⑥既存機能の回帰 = 駅行クリックで「選択中:駅「駅1」」表示 →
   元に戻す、環状線スイッチ ON、一覧⇔エディタ切替で `#leftcol` / `.split` / `#stage` / `#side` の表示・非表示。
   ⑦横溢れ 0・コンソールエラー 0 件・`node --check` 全合格。
+
+## 15. 読み込むJSONを必ず検証・修復する(`src/core/sanitize.js`)→ 決定(2026-10-07 実装・検証済み)
+
+依頼: `IMPROVEMENTS.md`(指示書 S1/S1b)。「他人の JSON を開く」のがこのアプリの通常の利用手順で、
+公開サイト( GitHub Pages )では読み込んだ中身がそのまま `innerHTML` に流れ込むと保存型 XSS になる。
+CSP は `script-src 'unsafe-inline'` のためインラインイベントハンドラを止められなかった(S2 で併せて対応)。
+
+- **方針(指示書の硬性規則どおり)**: ①**白名单で新規オブジェクトを作る**(入力は一切書き換えない・スプレッドしない)、
+  ②**直せるものは直して通す**(既存データの互換性を最優先。`invalid document` は地図が1件も無いときだけ)。
+- **入口は3つをすべて同じ関数へ**: 「読み込み」ボタン / 起動時の `railmaps` 読込 / `storage` イベント(タブ間同期)。
+  いずれも `core.importDocument()` = `sanitizeDocument()` → `migrate()` の順。
+  起動時に入れ直せない場合は初期状態で始めるが、**保存文字列はユーザーが編集するまで書き換えない**(データを消さない)。
+- **検証内容**: 色は `#rrggbb` のみ、数値は `Number.isFinite`(文字列は数値化せず既定へ)とクランプ、
+  ID は `[A-Za-z0-9_-]{1,64}` で一意(作り直したら `links` の参照も追従)、列挙値は許可リスト、
+  画像の `src` は `data:image/(png|jpeg|webp|gif);base64,…` のみ(svg・javascript:・http(s)・相対URLは画像ごと削除)、
+  件数は `LIMITS` で上限(超過は切り詰めて `warnings`)。白名单は `model.js` / `migration.js` /
+  **画面が読むプロパティを grep して**作成(落とせないデータを減らすため)。
+- **テスト**: `test/sanitize.test.js`(13件、`npm test` = `node --test`、依存ゼロ)に加え、
+  `test/fixtures/sample.json`(正当な文書 = ラウンドトリップで `migrate()` の結果が一致すること)と
+  `test/hostile/*.json`(手動取り込み用6件)。`package.json` には `"test"` に加え
+  `"type": "module"` を追加(テストから ESM の `src/` を import するため。実行時スクリプトは `.cjs` のまま)。
+- **検証(実ブラウザ http://localhost:8080/)**: ホストファイル6件を「読み込み」→ ダイアログ0件・コンソールエラー0件・
+  画面は操作可。`railmaps` に不正JSONを入れてリロード → 起動でき、**保存文字列は上書きされない**。
+  `storage` イベントに不正JSON → サニタイズ後の文書へ入れ替わる。`Object.prototype` 汚染なし。
+  `npm test` 13/13 green、`node --check` 全合格。
+- **差異(指示書との)**: 配信ブランチは指示書が想定する `main` ではなく **`deb_web-port`**(Pages の配信元)。
+  ルールは同じものとして扱い、作業ブランチは **`security/hardening`**(作成前に安全タグ `pre-hardening-2026-10` を push)。
+  リポジトリの `docs/AI-rule.md`(重要な変更は `deb_*`)と指示書のブランチ命名は食い違うため、指示書の
+  `security/hardening` を優先した。

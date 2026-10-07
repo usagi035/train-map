@@ -7,6 +7,7 @@ import { S, getSnapshot, replaceState, snapStr, newId, mkLine, mkMap, mkStation,
          OFF_LINK, COLORS, G, mw, mh, clamp } from './model.js';
 import { project, keepCrossings, segPt, segA, segB, dist } from './geometry.js';
 import { migrate } from './migration.js';
+import { sanitizeDocument } from './sanitize.js';
 import * as history from './history.js';
 
 // 踏切の位置をグリッド上の点に合わせる(snap=false のときは位置をそのまま使う)
@@ -35,10 +36,13 @@ export function createCore() {
     snapshot: snapStr,
     replace: replaceState,
     // 保存済み / 読み込んだデータを取り込む(不正なら例外を投げる)
+    // 中身は必ずサニタイズを通す。見た目の変な値は既定へ直し、
+    // 使いものにならない文書だけ invalid document(画面側で案内する)。
+    // 返り値は警告(件数超過などで直した内容)の配列。
     importDocument(d) {
-      if (!d || !Array.isArray(d.maps) || !d.maps.length ||
-          !d.maps.every(m => m && Array.isArray(m.lines) && m.lines.length)) throw new Error('invalid document');
-      replaceState(migrate(d));
+      const { doc, warnings } = sanitizeDocument(d);
+      replaceState(migrate(doc));
+      return warnings;
     },
 
     /* ---------- 履歴(§5: push / undo / redo / canUndo / canRedo) ---------- */

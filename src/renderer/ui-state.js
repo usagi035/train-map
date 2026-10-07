@@ -24,10 +24,18 @@ export const HINTS = {
 };
 
 /* ---------- 状態の読み込み(localStorage の読み書きは画面側の責務) ---------- */
+// 読み込んだ保存データは必ずサニタイズを通す(core.importDocument の中)。
+// 直せないときだけ初期状態で始める。ここで書き戻すことは無いので、
+// 保存文字列はユーザーが実際に編集するまで残ったまま(壊したデータは消さない)。
 let stored = null;
 try { stored = JSON.parse(localStorage.getItem('railmaps')); } catch (e) {}
-if (!stored || !Array.isArray(stored.maps) || !stored.maps.length) stored = { maps: [mkMap('路線図 1')] };
-core.importDocument(stored);
+let bootWarnings = [];
+if (stored && Array.isArray(stored.maps) && stored.maps.length) {
+  try { bootWarnings = core.importDocument(stored); }
+  catch (err) { console.warn('保存データを読み込めなかったため、初期状態で始めます。', err); stored = null; }
+}
+if (!stored || !core.getState().maps.length) core.importDocument({ maps: [mkMap('路線図 1')] });
+if (bootWarnings.length) console.warn('保存データを読み込むときに直した項目:', bootWarnings);
 
 export let ui = { map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: 1, drawing: null, bulk: [], bulkRect: null, bulkMap: null };
 const hm = S.maps.find(m => m.id === decodeURIComponent(location.hash.slice(1)));   // 別ウィンドウで開いたときの路線図

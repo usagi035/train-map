@@ -359,7 +359,8 @@ document.getElementById('file').addEventListener('change', e => {
   r.onload = () => {
     try {
       const d = JSON.parse(r.result);
-      core.importDocument(d);   // 形式が違うデータは例外を投げる(下でまとめて案内する)
+      const warns = core.importDocument(d);   // 形式が違うデータは例外を投げる(下でまとめて案内する)
+      if (warns && warns.length) console.warn('読み込んだデータで直した項目:', warns);
       replaceUi({ map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: ui.zoom, drawing: null }); persistOpen();
       save(); renderAll();
     } catch (err) { alert('読み込めませんでした。書き出したJSONファイルを選んでください。'); }
@@ -452,8 +453,9 @@ window.addEventListener('storage', e => {
   if (e.key !== 'railmaps' || !e.newValue || drag) return;
   try {
     const d = JSON.parse(e.newValue);
-    if (!Array.isArray(d.maps) || !d.maps.length) return;
-    core.replace(d);
+    // 保存文字列も読み込みと同じ入口でサニタイズ + 移行する(不正なら例外 → 下で黙って無視)
+    const syncWarnings = core.importDocument(d);
+    if (syncWarnings.length) console.warn('タブ間同期で直した項目:', syncWarnings);
     // 別ウィンドウの変更を取り込んだ時点で履歴をリセット
     core.resetHistory(viewNow());
     updateUndoButtons();

@@ -1,0 +1,20 @@
+{
+  "maps": [
+    {
+      "__proto__": { "polluted": true },
+      "constructor": { "prototype": { "polluted": true } },
+      "id": "m-proto",
+      "name": "prototype汚染",
+      "lines": [
+        { "id": "l1", "name": "1号線", "color": "#E5352B", "stations": [ { "id": "s1", "name": "駅", "x": 200, "y": 300, "hub": false, "links": {} } ], "crossings": [] }
+      ],
+      "roads": [],
+      "stops": [],
+      "hubs": [],
+      "boxes": [],
+      "images": [],
+      "show": { "road": true, "stop": true, "box": true, "img": true }
+    }
+  ],
+  "__proto__": { "polluted": true }
+}

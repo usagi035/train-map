@@ -1,0 +1,35 @@
+{
+  "maps": [
+    {
+      "id": "m-color",
+      "name": "色の攻撃",
+      "bg": "red\" onmouseover=\"alert(1)",
+      "lines": [
+        {
+          "id": "l1",
+          "name": "1号線",
+          "color": "red\" onmouseover=\"alert(1)",
+          "width": 8,
+          "loop": false,
+          "stations": [
+            { "id": "s1", "name": "悪意駅", "x": 200, "y": 300, "hub": false, "color": "red\" onmouseover=\"alert(1)" },
+            { "id": "s2", "name": "悪意駅2", "x": 400, "y": 300, "hub": false, "shape": "\"><img src=x onerror=alert(1)>" }
+          ],
+          "crossings": []
+        }
+      ],
+      "roads": [
+        { "id": "r1", "name": "道路", "color": "red\" onmouseover=\"alert(1)", "width": 16, "pts": [ { "x": 100, "y": 700 }, { "x": 900, "y": 700 } ] }
+      ],
+      "stops": [
+        { "id": "p1", "name": "バス停", "x": 300, "y": 700, "kind": "バス停\"><script>alert(1)</script>", "color": "red\" onmouseover=\"alert(1)" }
+      ],
+      "hubs": [],
+      "boxes": [
+        { "id": "b1", "x": 100, "y": 900, "w": 240, "h": 90, "text": "凡例", "fill": "red\" onmouseover=\"alert(1)" }
+      ],
+      "images": [],
+      "show": { "road": true, "stop": true, "box": true, "img": true }
+    }
+  ]
+}

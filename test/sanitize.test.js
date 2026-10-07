@@ -19,6 +19,10 @@ const fixture = () => JSON.parse(readFileSync(new URL('./fixtures/sample.json', 
 function baseDoc() {
   const m = mkMap('地図');
   m.id = 'm1';
+  // 実際に保存されている文書は migrate() を通っているので、その形に合わせておく
+  m.w = 2400; m.h = 1600;
+  m.show = { road: true, stop: true, box: true, img: true };
+  m.boxes = []; m.images = [];
   const l = m.lines[0];
   l.id = 'l1';
   l.stations = [
@@ -190,7 +194,7 @@ test('S1-10 使用不能な文書だけを invalid document で拒否する', ()
   assert.throws(() => sanitizeDocument({}), /invalid document/);
   assert.throws(() => sanitizeDocument({ maps: [] }), /invalid document/);
   assert.throws(() => sanitizeDocument({ maps: 'x' }), /invalid document/);
-  assert.throws(() => sanitizeDocument({ maps: [{ bogus: true }] }), /invalid document/, '路線の無い地図は使えない');
+  assert.throws(() => sanitizeDocument({ maps: [null, 'x'] }), /invalid document/, '使える地図が1つも無ければ使えない');
 });
 
 test('S1-11 入力オブジェクトを書き換えない(純粋な関数)', () => {
@@ -212,7 +216,7 @@ test('S1-12 上限と文字数: 件数キャップで切り詰め、日本語の
   assert.equal(doc.maps.length, LIMITS.maps, '地図の上限');
   assert.equal(doc.maps[0].lines[0].stations[0].name.length, LIMITS.nameLen, '名前は上限で切る');
   assert.equal(doc.maps[0].lines[0].stations[0].name[0], 'あ', '日本語はそのまま');
-  assert.ok(warnings.some(w => /地図/.test(w)), '切り詰めの警告');
+  assert.ok(warnings.some(w => /路線図/.test(w)), '切り詰めの警告');
 });
 
 test('S1-13 空の文書ではなく「路線図1件」に直せるものは直して通す', () => {

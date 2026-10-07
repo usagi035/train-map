@@ -16,8 +16,8 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
        └─ <script type="module" src="./src/renderer/renderer.js"> … 画面側の入口
             ├─ renderer/ui-state.js … 共通状態・共通操作・renderAll(各画面モジュールはここからのみ import)
             ├─ renderer/{canvas,side-panel,left-panel,tabs}.js … 描画と各画面の操作
-            ├─ core/{model,geometry,migration,history,operations}.js … 画面に依存しない操作(createCore)
-            ├─ 起動時: localStorage('railmaps') 読込 → migrate() → importDocument → renderAll()
+            ├─ core/{model,geometry,migration,sanitize,history,operations}.js … 画面に依存しない操作(createCore)
+            ├─ 起動時: localStorage('railmaps') 読込 → sanitizeDocument() → migrate() → importDocument → renderAll()
             ├─ 編集のたびに save() … 履歴に積み + localStorage へ書く
             └─ renderAll() = renderTabs / renderTools / renderCanvas / renderSide(+renderQuick) / renderLeft
 ```
@@ -44,6 +44,7 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
 | `src/core/model.js` | 状態 `S` の読み書き・ID(`newId`)・定数(COLORS/G/SHAPES/…)・各オブジェクト生成・接続の掃除 |
 | `src/core/geometry.js` | 距離・区間・環状線の計算(`dist` / `project` / `keepCrossings` など) |
 | `src/core/migration.js` | 旧形式のデータを新形式へ変換する `migrate()` |
+| `src/core/sanitize.js` | **読み込むJSONの検証と修復** `sanitizeDocument(raw)` → `{doc, warnings}`。白名单で作り直し、不正な色・数値・ID・画像は既定へ(§8 注12) |
 | `src/core/history.js` | Undo/Redo のスナップ管理(`init` / `push` / `undo` / `redo`) |
 | `src/core/operations.js` | 追加・削除・移動などの操作と `createCore()`。**画面側が core に触れる唯一の入口** |
 | `src/renderer/ui-state.js` | 画面側の共通状態・共通操作(`ui` / `save` / `renderAll` / □選択 / レイヤー判定 / 道路描画 / 削除)。**他の画面モジュールはここからのみ import する** |
@@ -53,7 +54,7 @@ npm start → scripts/serve.cjs (開発用の静的サーバー。Node標準の�
 | `src/renderer/tabs.js` | タブと一覧(ホーム)の描画・操作(`renderTabs` / `renderHome` / `openMap` / `closeTab` / `newMap` / `deleteMap`) |
 | `src/renderer/renderer.js` | 画面側の入口(約540行)。初期化、マウス・キー・ファイル入力、`storage` 同期、**サイドバーの幅管理(`wireSplit`)**、各モジュールの描画関数の登録 |
 | `index.html` | 画面の HTML / CSS(ルート直下) |
-| `package.json` | npm スクリプト(`start` / `serve` = 開発用サーバー)。依存パッケージ・ビルド設定は無い |
+| `package.json` | npm スクリプト(`start` / `serve` = 開発用サーバー、`test` = `node --test`)。依存パッケージ・ビルド設定は無い |
 | `scripts/serve.cjs` | 開発用の静的サーバー(Node 標準モジュールのみ。MIME とパストラバーサル対策を持つ) |
 | `README.md` | ユーザー向けの機能・操作説明 |
 | `docs/code_Desc.md` | このファイル(コード構造の説明) |
@@ -445,7 +446,7 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 
 | 箇所 | 動作 |
 | --- | --- |
-| `window 'storage'` | 別ウィンドウが `railmaps` を書き換えたら取り込む(**ドラッグ中は無視**)。取り込み時に**履歴はリセット**、開いているタブ/路線を有効な範囲に補正。`renderTabs`+`renderCanvas`、**入力欄にフォーカスがある間は `renderSide()` しない**(打ちかけの入力を消さないため) |
+| `window 'storage'` | 別ウィンドウが `railmaps` を書き換えたら取り込む(**ドラッグ中は無視**)。取り込みは**保存ボタンと同じ入口**を通す(= `sanitizeDocument()` → `migrate()`。壊れた中身は例外 → `catch` で無視)。取り込み時に**履歴はリセット**、開いているタブ/路線を有効な範囲に補正。`renderTabs`+`renderCanvas`、**入力欄にフォーカスがある間は `renderSide()` しない**(打ちかけの入力を消さないため) |
 
 ---
 
@@ -499,3 +500,11 @@ import は **ui-state → 各画面モジュール** の一方向だけにし(�
 11. **サイドバーの幅は「見たまま」が保存値** — `effWidths()`(表示幅の決定)と `setPanelW()`(ドラッグ結果の保存)が
     同じ実効幅を使うため、ウィンドウが狭くて自動で縮んだ場合でも、保存値がその縮んだ値に上書きされることはない。
     データ形式(`railmaps`)には一切触れない UI の設定値(`railpanelw`)だけを増やしている。
+12. **読み込むJSONは必ず `sanitizeDocument()` を通る** — 入口は3つ(①「読み込み」ボタン、②起動時の `railmaps` 読込、
+    ③ `storage` イベントのタブ間同期)で、すべて `core.importDocument()` 経由 = `sanitizeDocument()` → `migrate()` の順。
+    - **白名单で作り直す**(入力は書き換えない)。色は `#rrggbb` のみ、数値は `Number.isFinite` のみ(文字列は数値化しない)、
+      IDは `[A-Za-z0-9_-]{1,64}` かつ一意(作り直したらリンク参照も追従)、列挙値は許可リスト、
+      画像の `src` は `data:image/(png|jpeg|webp|gif);base64,…` のみ。
+    - **直せるものは直して通す**(件数超過は切り詰めて `warnings`、`invalid document` は地図が1件も無いときだけ)。
+    - 起動時に入れ直せないときは初期状態で始めるが、**保存文字列はユーザーが編集するまで書き換えない**。
+    - 受入テストは `test/sanitize.test.js`(`npm test`)、手動確認用の不正JSONは `test/hostile/`。
