@@ -3,32 +3,21 @@
    (元は src/ui/renderer.js の1ファイル。指示書 §8〜§12 に沿って画面側を分割した)
    =========================================================================== */
 import { S, G, mw, mh, clamp, mkMap, findStationIn, linesOfIn, lw, isDark, BG, SHAPES } from '../core/model.js';
-import { dist, segPt } from '../core/geometry.js';
-import { LIMITS, safeFilename } from '../core/sanitize.js';
-import { core, ui, replaceUi, esc, num, curMap, curLine, findStation, linesOf, viewNow, updateUndoButtons,
+import { dist } from '../core/geometry.js';
+import { core, ui, replaceUi, esc, curMap, curLine, findStation, linesOf, viewNow, updateUndoButtons,
          setRender,
-         save, deferSave, getBulk, clearBulk, rectOf, pickInBox, isStationLocked, hitLocked, selLocked,
-         lineEditBlocked,
+         save, getBulk, clearBulk, rectOf, pickInBox, isStationLocked, hitLocked, lineEditBlocked,
          snapOn, autoselOn, snapPt, renderAll, renderTools, del, cancelRoad, finishRoad, startRoadDrawing,
-         addRoadPoint, updateRoadHint, imgPick,
-         keepLocalVersion, clearLocalAuthority, shouldAskRemote, setSaveFailed,
-         touchMap, stampMissing } from './ui-state.js';
-import { cv, stage, pt, setZoom, centerOn, renderCanvas, setBandSource } from './canvas.js';
+         addRoadPoint, updateRoadHint, imgPick } from './ui-state.js';
+import { cv, stage, pt, setZoom, renderCanvas, setBandSource } from './canvas.js';
 import { renderSide } from './side-panel.js';
 import { renderLeft } from './left-panel.js';
 import { renderTabs, renderHome, persistOpen } from './tabs.js';
-import { KEYS } from './storage.js';
-import { setBanner, clearBanner, hasBanner } from './banner.js';
-import { toast } from './toast.js';
 
 // 履歴のスナップを画面へ適用する(表示中の路線図・路線を、そのときのものへ合わせ直す)
 function applySnap(e) {
   // 状態そのものは core.undo() / core.redo() が入れ替え済み
-  // ここは文書本体の保存なので、失敗は黙らず「保存失敗」の知らせへ回す(S5)
-  try { localStorage.setItem(KEYS.maps, e.s); setSaveFailed(false); } catch (err) {
-    console.warn('元に戻す/やり直し後の保存に失敗しました:', err);
-    setSaveFailed(true);
-  }
+  try { localStorage.setItem('railmaps', e.s); } catch (err) {}
   const v = e.v || {};
   ui.open = ui.open.filter(id => S.maps.some(m => m.id === id));
   const mid = S.maps.some(m => m.id === v.map) ? v.map : S.maps[0].id;
@@ -50,14 +39,11 @@ function undo() {
     } else cancelRoad();
     return;
   }
-  save();   // 矢印の連打など「まだ履歴に積んでいない変更」を先に積む(U4)。
-            // 積まないと、戻したい1回の直前にある変更まで一緒に消える
   const e = core.undo();
   if (e) applySnap(e);
 }
 function redo() {
   if (ui.drawing) return;
-  save();   // 同上: 戻したあとの変更を先に確定してからやり直す(U4)
   const e = core.redo();
   if (e) applySnap(e);
 }
@@ -86,13 +72,10 @@ function addBusStop(p, kind) {
 function addCrossing(p) {
   const res = core.addCrossing({ map: curMap(), p, snap: snapOn() });
   if (res.error === 'none') return;
-  if (res.error) {   // ロック中・非表示の路線には追加できない(その場で直せるようにボタンも添える)
-    const l = res.line, locked = res.error === 'locked';
-    toast('「' + l.name + '」は' + (locked ? 'ロック中' : '非表示') + 'です。追加できません。', {
-      key: 'line-blocked',
-      actions: [{ label: locked ? 'ロックを解除' : '表示に戻す',
-                  onClick: () => { core.update(l, locked ? { lock: false } : { hidden: false }); save(); renderAll(); } }],
-    });
+  if (res.error) {   // ロック中・非表示の路線には追加できない
+    const l = res.line;
+    alert('「' + l.name + '」は' + (res.error === 'locked' ? 'ロック中' : '非表示') + 'です。\n右パネルの ' +
+          (res.error === 'locked' ? '🔒 を解除' : '👁 で表示に戻す') + 'してから追加してください。');
     return;
   }
   ui.line = res.line.id; ui.sel = { t: 'cx', id: res.crossing.id };
@@ -112,77 +95,25 @@ let band = null;   // 空白のドラッグで引く□(矩形選択)
 let spaceDown = false, pan = null;   // Space+ドラッグ / 中ボタンで画面をスクロール
 setBandSource(() => band);   // 描画へは画面が持つ□の状態を渡す
 
-// 画面のパン(Space+ドラッグ または 中ボタンドラッグ。2本指のパンは下の movePinch() 側)
-stage.addEventListener('pointerdown', e => {
+// 画面のパン(Space+ドラッグ または 中ボタンドラッグ)
+stage.addEventListener('mousedown', e => {
   if (e.button === 1 || (e.button === 0 && spaceDown)) {
     e.preventDefault();
-    try { stage.setPointerCapture(e.pointerId); } catch (err) {}   // ドラッグ中は指(カーソル)を受け取り続ける
     pan = { x: e.clientX, y: e.clientY, sl: stage.scrollLeft, st: stage.scrollTop };
     stage.style.cursor = 'grabbing';
   }
 });
-window.addEventListener('pointermove', e => {
+window.addEventListener('mousemove', e => {
   if (!pan) return;
   stage.scrollLeft = pan.sl - (e.clientX - pan.x);
   stage.scrollTop = pan.st - (e.clientY - pan.y);
 });
-window.addEventListener('pointerup', () => {
+window.addEventListener('mouseup', () => {
   if (pan) { pan = null; stage.style.cursor = spaceDown ? 'grab' : ''; }
 });
 
-/* ---------- ポインタ入力(マウス / タッチ / ペン)(U1) ----------
-   マウスは従来どおり「押した瞬間」に行動する。タッチ/ペンは、
-   ① 追加する行動(駅・乗り換え・踏切・バス停・終点・道路・ラベル枠)は
-      「動かずに離した(=タップ)」に実行 → 押した指のまま2本目が来たら取り消す
-      (ピンチの開始と誤爆しないため)。
-   ② 2本指 = 開いた距離でズーム、中点の移動でパン(Space+ドラッグと同じ scroll 操作)。
-   ③ 押した指は `setPointerCapture` で canvas が受け取り続ける(画面外へ出ても追える)。 */
-const pointers = new Map();   // pointerId → そのときのクライアント座標(マウスは対象外)
-let pinch = null;             // 2本指の基準(距離・中点・スクロール位置・開始時のズーム)
-let pendingAct = null;        // タッチで保留中の「追加する」行動
-let lastTapAt = 0;            // タッチのダブルタップ(道路の確定 = マウスのダブルクリック相当)
-
-// 追加する行動の置き場所。マウスは即、タッチ/ペンはタップ(離したとき)に実行する。
-function actAt(e, fn) {
-  if (e.pointerType === 'mouse') { fn(); return; }
-  pendingAct = { fn, x: e.clientX, y: e.clientY, moved: false, at: Date.now() };
-}
-// 2本目が来たら、進行中の操作を確定して止めてからズーム/パンへ移る
-function beginPinch() {
-  if (band) finishBand();
-  if (drag) { drag = null; save(); }
-  pendingAct = null;
-  const [a, b] = [...pointers.values()];
-  pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2,
-            sl: stage.scrollLeft, st: stage.scrollTop, z0: ui.zoom };
-}
-function movePinch() {
-  if (!pinch) return;
-  const [a, b] = [...pointers.values()];
-  if (!a || !b) return;
-  // 中点が動いた分だけパン(Space+ドラッグと同じ)
-  stage.scrollLeft = pinch.sl - ((a.x + b.x) / 2 - pinch.cx);
-  stage.scrollTop = pinch.st - ((a.y + b.y) / 2 - pinch.cy);
-  // 開いた距離の比だけズーム(既存の setZoom を使う = マウスのズームと同じ挙動)
-  const d = Math.hypot(a.x - b.x, a.y - b.y);
-  if (pinch.d > 8 && d > 8) {
-    const r = stage.getBoundingClientRect();
-    setZoom(pinch.z0 * (d / pinch.d), (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
-  }
-}
-
-cv.addEventListener('pointerdown', e => {
-  // キャンバスをフォーカスして、そのあとの矢印キー・Tab を受け取るようにする(U4)。
-  // マウスでは :focus-visible が出ないので、見た目は変わらない
-  try { cv.focus({ preventScroll: true }); } catch (err) { try { cv.focus(); } catch (e2) {} }
+cv.addEventListener('mousedown', e => {
   if (e.button !== 0 || spaceDown) return;   // 中ボタン / Space押下中はパン処理へ
-  // 押した指(マウス)を受け取り続ける。指がキャンバスの外へ出ても移動・離しを追える
-  try { cv.setPointerCapture(e.pointerId); } catch (err) {}
-  if (e.pointerType !== 'mouse') {
-    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.size === 2) { beginPinch(); return; }   // 2本目 → いまの操作を止めてズーム/パンへ
-    if (pointers.size > 2) return;                      // 3本目以降は無視
-  }
   const el = e.target.closest('[data-t]'), p = pt(e), m = curMap();
   clearBulk();   // クリックされた時点で矩形選択のまとまりは解除(下で□選択を始める場合はまた設定される)
   // ロック中の路線の駅・踏切は、どのツールでも選択・操作しない(誤操作防止)
@@ -202,21 +133,17 @@ cv.addEventListener('pointerdown', e => {
       renderAll();
       return;
     }
-    actAt(e, () => addStation(p));
-    return;
+    return addStation(p);
   }
-  if (ui.tool === 'hub') { actAt(e, () => addHubStation(p)); return; }
-  if (ui.tool === 'crossing') { actAt(e, () => addCrossing(p)); return; }
-  if (ui.tool === 'busstop') { actAt(e, () => addBusStop(p, 'stop')); return; }
-  if (ui.tool === 'terminal') { actAt(e, () => addBusStop(p, 'terminal')); return; }
-  if (ui.tool === 'road') { actAt(e, () => { if (!ui.drawing) ui.drawing = { pts: [], hover: null }; addRoadPoint(p); }); return; }
+  if (ui.tool === 'hub') return addHubStation(p);
+  if (ui.tool === 'crossing') return addCrossing(p);
+  if (ui.tool === 'busstop') return addBusStop(p, 'stop');
+  if (ui.tool === 'terminal') return addBusStop(p, 'terminal');
+  if (ui.tool === 'road') { if (!ui.drawing) ui.drawing = { pts: [], hover: null }; addRoadPoint(p); return; }
   if (ui.tool === 'box') {
-    actAt(e, () => {
-      const b = core.addBox(m, snapPt(p));   // 既定サイズのラベル枠を追加
-      ui.sel = { t: 'bx', id: b.id }; drag = { t: 'bxnew', id: b.id, a: { x: b.x, y: b.y }, p0: p };
-      renderAll();
-    });
-    return;
+    const b = core.addBox(m, snapPt(p));   // 既定サイズのラベル枠を追加
+    ui.sel = { t: 'bx', id: b.id }; drag = { t: 'bxnew', id: b.id, a: { x: b.x, y: b.y }, p0: p };
+    renderAll(); return;
   }
   // 選択モードで空白(または線)をドラッグ → □で複数選択
   if (ui.tool === 'select' && (!el || el.dataset.t === 'line')) {
@@ -274,11 +201,7 @@ cv.addEventListener('pointerdown', e => {
   else ui.sel = null;
   renderAll();
 });
-window.addEventListener('pointermove', e => {
-  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (pointers.size >= 2) { movePinch(); return; }   // 2本指 = パン + ズーム
-  // タップにしていた指が動いたら「追加」は実行しない(誤爆防止)
-  if (pendingAct && Math.hypot(e.clientX - pendingAct.x, e.clientY - pendingAct.y) > 8) pendingAct.moved = true;
+window.addEventListener('mousemove', e => {
   if (band) {   // □(矩形選択)を引いている間
     band.b = pt(e);
     if (!band.moved && Math.hypot(band.b.x - band.a.x, band.b.y - band.a.y) > 3) band.moved = true;
@@ -361,156 +284,40 @@ function finishBand() {
   else clearBulk();
   renderAll();
 }
-// 指を離した(タップの確定) / ブラウザが操作を取り消した(pointercancel)
-function endPointer(e, runTap) {
-  pointers.delete(e.pointerId);
-  if (pointers.size < 2) pinch = null;   // 2本いなくなったらズーム/パン終了
-  if (runTap) {
-    const a = pendingAct; pendingAct = null;
-    if (a && !a.moved && Date.now() - a.at < 800) {   // 動いていない指 = タップ
-      a.fn();
-      // タッチのダブルタップ = マウスのダブルクリック相当(幹線道路の確定)
-      if (ui.drawing && Date.now() - lastTapAt < 320) finishRoad();
-      lastTapAt = Date.now();
-    }
-  } else {
-    pendingAct = null;
-  }
+window.addEventListener('mouseup', () => {
   if (band) { finishBand(); return; }
   if (!drag) return;
   const was = drag; drag = null; save();
   if (was.t === 'bxnew') { afterAdd(); renderAll(); }
-}
-window.addEventListener('pointerup', e => endPointer(e, true));
-window.addEventListener('pointercancel', e => endPointer(e, false));
-// 幹線道路ツール: マウス位置への予告線(タッチにホバーは無い)
-window.addEventListener('pointermove', e => {
-  if (e.pointerType === 'touch') return;
+});
+// 幹線道路ツール: マウス位置への予告線
+window.addEventListener('mousemove', e => {
   if (!ui.drawing || drag) return;
   ui.drawing.hover = snapPt(pt(e));
   renderCanvas();
 });
 // ダブルクリックで道路を確定
 cv.addEventListener('dblclick', () => { if (ui.drawing) finishRoad(); });
-
-/* ---------- キーボードでの編集(U4) ----------
-   マウスのドラッグと同じ core の操作を使う(状態を書き換えるのは core 経由だけ)。
-   ステップは「グリッドに合わせる」ON = 1マス(G)、OFF = 1単位、Shift で5倍。
-   連打は 600ms でまとめて1回の履歴にする(文字入力と同じ deferSave の扱い)。 */
-const stepOf = e => (snapOn() ? G : 1) * (e.shiftKey ? 5 : 1);
-
-// 矢印キーで動かしてよいか:入力中ではなく、キャンバスか未フォーカスのときだけ。
-// (サイドバー幅のハンドルは ← → を自分の幅変更に使うので、フォーカス中は触らない)
-const nudgeFocus = () => {
-  const ae = document.activeElement;
-  return !isTextEditing() && (!ae || ae === document.body || ae === cv);
-};
-
-// 選択中の要素の座標(Tab で選ぶのは主要な要素だけなので、それだけで足りる)
-function selPos(sel) {
-  const m = curMap();
-  if (sel.t === 'st') { const s = findStation(sel.id); return s ? { x: s.x, y: s.y } : null; }
-  if (sel.t === 'stop') { const s = (m.stops || []).find(x => x.id === sel.id); return s ? { x: s.x, y: s.y } : null; }
-  if (sel.t === 'cx') {
-    const l = curLine(), c = l.crossings.find(x => x.id === sel.id);
-    return c ? segPt(l, c.seg, c.t) : null;   // 踏切は保存座標を持たないので線の上の位置から取る
-  }
-  if (sel.t === 'bx') { const b = (m.boxes || []).find(x => x.id === sel.id); return b ? { x: b.x, y: b.y } : null; }
-  if (sel.t === 'img') { const im = (m.images || []).find(x => x.id === sel.id); return im ? { x: im.x, y: im.y } : null; }
-  if (sel.t === 'road') { const r = (m.roads || []).find(x => x.id === sel.id); return r && r.pts.length ? r.pts[0] : null; }
-  return null;
-}
-
-// 矢印キーで選択中の要素をステップ移動する。マウスのドラッグと同じ分岐・同じ core 呼び出し。
-function nudge(dx, dy) {
-  const sel = ui.sel;
-  if (!sel || selLocked(sel)) return false;   // ロック中の路線は動かせない(同じ理由でドラッグも無理)
-  const m = curMap();
-  if (sel.t === 'st') {
-    const s = findStation(sel.id); if (!s) return false;
-    const q = { x: clamp(s.x + dx, 0, mw(m)), y: clamp(s.y + dy, 0, mh(m)) };
-    core.ensureRoom(m, q.x, q.y);
-    core.moveStationTo(m, s, q.x, q.y);        // 乗り換え駅は全路線の同じ駅も動かす
-  } else if (sel.t === 'stop') {
-    const s = (m.stops || []).find(x => x.id === sel.id); if (!s) return false;
-    const q = { x: clamp(s.x + dx, 0, mw(m)), y: clamp(s.y + dy, 0, mh(m)) };
-    core.ensureRoom(m, q.x, q.y);
-    core.update(s, { x: q.x, y: q.y });
-  } else if (sel.t === 'cx') {
-    const l = curLine(), c = l.crossings.find(x => x.id === sel.id);
-    const p0 = c && segPt(l, c.seg, c.t);
-    if (!p0) return false;
-    core.moveCrossingTo(l, c, { x: p0.x + dx, y: p0.y + dy }, snapOn());   // 線の上へ投影して戻す
-  } else if (sel.t === 'bx') {
-    const b = (m.boxes || []).find(x => x.id === sel.id); if (!b) return false;
-    const q = { x: clamp(b.x + dx, 0, Math.max(0, mw(m) - b.w)), y: clamp(b.y + dy, 0, Math.max(0, mh(m) - b.h)) };
-    core.ensureRoom(m, q.x + b.w, q.y + b.h);
-    core.update(b, { x: q.x, y: q.y });
-  } else if (sel.t === 'img') {
-    const im = (m.images || []).find(x => x.id === sel.id); if (!im) return false;
-    const q = { x: clamp(im.x + dx, 0, Math.max(0, mw(m) - im.w)), y: clamp(im.y + dy, 0, Math.max(0, mh(m) - im.h)) };
-    core.ensureRoom(m, q.x + im.w, q.y + im.h);
-    core.update(im, { x: q.x, y: q.y });
-  } else if (sel.t === 'road') {
-    const r = (m.roads || []).find(x => x.id === sel.id); if (!r || !r.pts.length) return false;
-    core.ensureRoom(m, Math.max(...r.pts.map(p => p.x)) + dx, Math.max(...r.pts.map(p => p.y)) + dy);
-    r.pts.forEach(p => core.update(p, { x: clamp(p.x + dx, 0, mw(m)), y: clamp(p.y + dy, 0, mh(m)) }));
-  } else return false;
-  renderCanvas(); renderSide();
-  deferSave();
-  return true;
-}
-
-// Tab / Shift+Tab: キャンバス内の要素を順に選ぶ。
-// 順番は pickInBox の並び(路線ごとの駅 → 乗り換え駅 → バス停 → 踏切 → ラベル枠 → 画像 → 道路)。
-function cycleSel(back) {
-  const m = curMap();
-  const list = pickInBox(m, { x0: 0, y0: 0, x1: mw(m), y1: mh(m) });
-  if (!list.length) { ui.sel = null; renderAll(); return; }
-  const i = ui.sel ? list.findIndex(h => h.t === ui.sel.t && h.id === ui.sel.id) : -1;
-  const n = i < 0 ? (back ? list.length - 1 : 0) : (i + (back ? list.length - 1 : 1)) % list.length;
-  ui.sel = list[n];
-  renderAll();
-  const p = selPos(ui.sel);
-  if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) centerOn(p.x, p.y);   // 選んだ要素が見えるよう中央へ
-}
-
 window.addEventListener('keydown', e => {
   // タブを閉じる。Ctrl+W/Cmd+W はブラウザ(タブを閉じる)が先に掴むため Web 版では Alt+W。
   // e.code は配列・OS に依存しない物理キー(Mac の Option+W は表示文字が '∫' になる)。key の方でも受ける。
   if (e.altKey && (e.code === 'KeyW' || e.key.toLowerCase() === 'w')) { e.preventDefault(); if (!window.__closeTab()) window.close(); return; }
   const k = e.key.toLowerCase();
-  // 入力欄・プルダウン・編集可能領域ではアプリのショートカットを受け付けない。
-  // ※ 以前は `/INPUT|TEXTAREA/` のみで、SELECT と contenteditable を見ておらず、
-  //   プルダウンにフォーカスしたまま Backspace を押すと選択中の駅が消えていた(U4 の修正)
+  const ae = document.activeElement;
+  const inText = ae && /INPUT|TEXTAREA/.test(ae.tagName) && !/^(checkbox|radio|range|color|button|submit|file|hidden)$/i.test(ae.type);
   if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y') && !e.altKey) {
-    if (isTextEditing()) return;                 // 入力中はブラウザ標準の取り消しを使う
+    if (inText) return;                       // テキスト欄ではブラウザ標準の取り消しを使う
     e.preventDefault();
     if (k === 'y' || e.shiftKey) redo(); else undo();
     return;
   }
-  if (isTextEditing()) return;
+  if (/INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
   if (e.key === 'Delete' || e.key === 'Backspace') del();
   if (e.key === 'Enter' && ui.drawing) { e.preventDefault(); finishRoad(); return; }   // 確定(ボタンの再発火も止める)
   if (e.key === 'Escape') {
     if (ui.drawing) cancelRoad();
     else if (getBulk().length) { clearBulk(); renderAll(); }   // □選択の解除
     else { ui.tool = 'select'; renderTools(); }
-  }
-  // 矢印キー = 選択中の要素をステップ移動(グリッドONは1マス、OFFは1単位、Shift で5倍 = U4)
-  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-    if (!nudgeFocus()) return;   // 入力中・サイドバー幅ハンドルのフォーカス中は動かさない
-    e.preventDefault();
-    const d = stepOf(e);
-    nudge(e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0,
-          e.key === 'ArrowUp' ? -d : e.key === 'ArrowDown' ? d : 0);
-    return;
-  }
-  // Tab = キャンバスにフォーカスがあるときだけ、要素を順に選ぶ(それ以外は通常のフォーカス移動のまま)
-  if (e.key === 'Tab' && document.activeElement === cv && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    e.preventDefault();
-    cycleSel(e.shiftKey);
-    return;
   }
   if (e.code === 'Space') {   // Space押下中はドラッグで画面をスクロール
     e.preventDefault();
@@ -520,32 +327,6 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => {
   if (e.code === 'Space') { spaceDown = false; if (!pan) stage.style.cursor = ''; }
 });
-// 矢印の連打や文字入力は 600ms まとめて1回の履歴(deferSave)。その保留が残ったまま
-// 画面を閉じると変更が残らないので、離れる前に確定する(U4)
-window.addEventListener('pagehide', () => save());
-
-/* ---------- 書き出しファイル名(S6) ----------
-   JSON は日時を入れて同じ名前のまま保存しにくくする(地図名は使わない:
-   同じ名前が並ぶと上書きしてしまい、いつの版か分からなくなるため)。
-   PNG は地図名を使うが、入力値はそのまま使わず `safeFilename()` で
-   ファイル名に使える文字だけ残す。 */
-const stamp = () => {
-  const d = new Date(), p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
-};
-const jsonFileName = () => `railmaps-${stamp()}.json`;
-
-/* ---------- ツールバーの「?」= ショートカット一覧(U3) ----------
-   Space での画面移動など、ボタンを見ただけでは分からない操作を1か所に集めた。
-   開いたままにせず、場所を押す・Esc ですぐ閉じる。 */
-const keyshelp = document.getElementById('keyshelp'), keyspop = document.getElementById('keyspop');
-function setKeysPop(on) {
-  keyspop.hidden = !on;
-  keyshelp.setAttribute('aria-expanded', on ? 'true' : 'false');
-}
-keyshelp.addEventListener('click', e => { e.stopPropagation(); setKeysPop(keyspop.hidden); });
-document.addEventListener('click', e => { if (!keyspop.hidden && !keyspop.contains(e.target)) setKeysPop(false); });
-window.addEventListener('keydown', e => { if (e.key === 'Escape' && !keyspop.hidden) setKeysPop(false); });
 
 /* ---------- toolbar / tabs ---------- */
 document.getElementById('tools').addEventListener('click', e => {
@@ -566,96 +347,43 @@ document.getElementById('tools').addEventListener('click', e => {
   if (b.id === 'imp') document.getElementById('file').click();
   if (b.id === 'addimg') { imgPick.replaceId = null; document.getElementById('imgfile').click(); }
   if (b.id === 'exp') {
-    // 書き出した直後に URL を捨てると取りこぼすブラウザがあるので、少し待ってから捨てる(U6)
-    download(new Blob([JSON.stringify(core.getState(), null, 2)], { type: 'application/json' }), jsonFileName());
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(core.getState(), null, 2)], { type: 'application/json' }));
+    a.download = 'railmaps.json'; a.click(); URL.revokeObjectURL(a.href);
   }
-  if (b.id === 'expimg') {
-    e.stopPropagation();   // 押した瞬間に document の「外側を押すと閉じる」へ届いて閉まらないように
-    setExpPop(exppop.hidden);
-  }
+  if (b.id === 'expimg') exportImage();
 });
 document.getElementById('file').addEventListener('change', e => {
   const f = e.target.files[0]; if (!f) return;
-  // 読む前に大きさを断つ(大きいJSONでフリーズさせない。S6)
-  if (f.size > LIMITS.jsonFileBytes) {
-    toast('JSONファイルが大きすぎます(上限10MB)。このアプリで書き出したJSONを選んでください。', { key: 'import' });
-    e.target.value = ''; return;
-  }
   const r = new FileReader();
-  r.onerror = () => toast('ファイルを読み込めませんでした。', { key: 'import' });
   r.onload = () => {
-    let d = null;
-    // どこで失敗したかを分けて出す(「読み込めませんでした」だけでは直しようが無い)
-    try { d = JSON.parse(r.result); }
-    catch (err) { toast('このファイルはJSONではありません。書き出したJSONファイルを選んでください。', { key: 'import' }); return; }
     try {
-      const warns = core.importDocument(d);   // 使いものにならない文書だけ例外を投げる
+      const d = JSON.parse(r.result);
+      core.importDocument(d);   // 形式が違うデータは例外を投げる(下でまとめて案内する)
       replaceUi({ map: S.maps[0].id, line: S.maps[0].lines[0].id, sel: null, tool: 'select', open: S.maps.map(m => m.id), home: false, zoom: ui.zoom, drawing: null }); persistOpen();
-      dropRemote();   // 文書を入れ替えたので、いま出ている「別タブの変更」は無効(S4)
       save(); renderAll();
-      // 入れて替えたので、全部の路線図の最終更新として記録する(U5)
-      S.maps.forEach(m => touchMap(m.id));
-      toast((warns && warns.length) ? '取り込みました。' + warns.length + '件の項目を補正しました。' : '取り込みました。',
-        { key: 'import' });
-      if (warns && warns.length) console.warn('読み込んだデータで直した項目:', warns);
-    } catch (err) {
-      toast((err && err.message === 'invalid document')
-        ? 'このファイルは路線図のデータではありません。書き出したJSONファイルを選んでください。'
-        : '取り込めませんでした(' + (err && err.message ? err.message : '理由不明') + ')。',
-        { key: 'import' });
-    }
+    } catch (err) { alert('読み込めませんでした。書き出したJSONファイルを選んでください。'); }
   };
   r.readAsText(f); e.target.value = '';
-});
-
-/* ---------- 空の路線図の案内からサンプルを読み込む(U5) ---------- */
-// 同梱のサンプルは中身を入れ替える(開いているタブの ID はそのまま)。
-// データは src/core/sample.js にあり、sanitizeDocument を通ることを S1 のテストで確かめる。
-document.getElementById('loadsample').addEventListener('click', () => {
-  const m = curMap();
-  if (!m || !core.loadSample(m.id)) return;
-  ui.line = curMap().lines[0].id;   // 中身を入れ替えたので、路線IDを選び直す
-  ui.sel = null;
-  save(m.id);                       // 入れた路線図の最終更新として記録する(U5)
-  renderAll();
-  toast('サンプルの路線図を読み込みました');
 });
 
 /* ---------- 画像のインポート ---------- */
 // 保存領域の上限に近づいたら注意(画像を取り込むと超えやすい)
 function checkQuota() {
-  if (core.snapshot().length > 4500000) toast('画像の取り込みで保存領域の上限に近づいています。保存に失敗する場合は、画像を小さくするか削除してください。', { key: 'quota', ms: 7000 });
+  if (core.snapshot().length > 4500000) alert('画像の取り込みで保存領域の上限に近づいています。\n保存に失敗する場合は、画像を小さくするか削除してください。');
 }
 // 画像ファイルを読み込んでキャンバスに配置。大きい画像は縮小してdata URLに畳む(localStorage対策)
-// `accept="image/*"` は見た目で何も強制しないので、型・大きさ・解像度はすべてここで確かめる(S6)。
-// SVG は取り込めない: 保存側の許可リスト(S1: png/jpeg/webp/gif)に無いため、
-// 入れても再読込のときに画像ごと捨てられ、ユーザーのデータが消えるため。
-const IMG_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
 function importImageFile(file, replaceId) {
   if (!file) return;
-  if (!file.type || IMG_TYPES.indexOf(file.type) < 0) {
-    toast(file.type === 'image/svg+xml'
-      ? 'SVG画像は取り込めません。PNG・JPG・GIF・WebPのいずれかに変換してから読み込んでください。'
-      : '画像ファイル(PNG・JPG・GIF・WebP)を選んでください。', { key: 'img' });
-    return;
-  }
-  if (file.size > LIMITS.imageFileBytes) {
-    toast('画像ファイルが大きすぎます(上限15MB)。小さくしてから読み込んでください。', { key: 'img' });
-    return;
-  }
+  if (file.type && file.type.indexOf('image/') !== 0) { alert('画像ファイル(PNG・JPG・GIF・WebPなど)を選んでください。'); return; }
   const rd = new FileReader();
-  rd.onerror = () => toast('画像ファイルを読み込めませんでした。', { key: 'img' });
+  rd.onerror = () => alert('画像を読み込めませんでした。');
   rd.onload = () => {
     const im = new Image();
-    im.onerror = () => toast('画像として読めませんでした。ファイルが壊れていないか確認してください。', { key: 'img' });
+    im.onerror = () => alert('画像を読み込めませんでした。');
     im.onload = () => {
       const m = curMap(), MAX = 1600;
       const nw = im.naturalWidth || 100, nh = im.naturalHeight || 100;
-      // 解像度の上限は canvas に描く前(= メモリを食う処理の前)に確かめる(S6)
-      if (nw * nh > LIMITS.imagePixels) {
-        toast('画像の解像度が高すぎます(上限5000万画素)。小さくしてから読み込んでください。', { key: 'img' });
-        return;
-      }
       let src = rd.result;
       const scale = Math.min(1, MAX / Math.max(nw, nh));
       if (scale < 1 || file.size > 400 * 1024) {   // 多くの場合は縮小して再エンコード(WebP不可の環境ではPNG)
@@ -692,119 +420,41 @@ document.getElementById('imgfile').addEventListener('change', e => {
   if (f) importImageFile(f, rid);
 });
 
-/* ---------- 画像の書き出し(U6: 倍率・背景の透過・SVG) ----------
-   出力する中身は「生きているキャンバス」を書き換えずに作る:
-   `cloneNode(true)` したクローンからだけ選択の枠(data-chrome)を取り除く。 */
-const expimg = document.getElementById('expimg'), exppop = document.getElementById('exppop');
-function setExpPop(on) {
-  exppop.hidden = !on;
-  expimg.setAttribute('aria-expanded', on ? 'true' : 'false');
-}
-document.addEventListener('click', e => { if (!exppop.hidden && !exppop.contains(e.target)) setExpPop(false); });
-window.addEventListener('keydown', e => { if (e.key === 'Escape' && !exppop.hidden) setExpPop(false); });
-document.getElementById('exppng').addEventListener('click', () => { setExpPop(false); exportImage('png'); });
-document.getElementById('expsvg').addEventListener('click', () => { setExpPop(false); exportImage('svg'); });
-// 選んだ倍率(1× / 2× / 3×)。1× は従来どおりの大きさ
-const expScale = () => {
-  const r = document.querySelector('#exppop input[name="expsize"]:checked');
-  const n = r ? parseInt(r.value, 10) : 1;
-  return n >= 1 && n <= 3 ? n : 1;
-};
-
-// 書き出し用のクローンを作る(**生きているキャンバスには絶対に触れない**)
-function exportClone(scale, transparent) {
-  const clone = document.getElementById('cv').cloneNode(true);
-  clone.querySelectorAll('[data-chrome]').forEach(n => n.remove());   // 選択の枠・ハンドル・□の枠・描画中プレビュー
-  if (transparent) { const bg = clone.querySelector('[data-bg]'); if (bg) bg.remove(); }
-  // 画像として読ませるときの解像度は SVG の width/height で決まる。ズームに引きずられず
-  // 「マップの大きさ × 倍率」にそろえる(1× で等倍、倍率が上がってもぼやけない)
-  const w = num(mw(curMap())), h = num(mh(curMap()));
-  clone.setAttribute('width', w * scale);
-  clone.setAttribute('height', h * scale);
-  clone.setAttribute('viewBox', `0 0 ${w} ${h}`);
-  // 単体で開いても同じ見えにする(SVG は HTML の書体を継承しないので、書体を埋め込む)
-  clone.setAttribute('font-family', getComputedStyle(document.body).fontFamily);
-  return clone;
-}
-// SVG の文字列にする。XML として読めるよう xmlns が無ければ足す
-function svgText(clone) {
-  const s = new XMLSerializer().serializeToString(clone);
-  return /^<svg[^>]*\sxmlns=/.test(s) ? s : s.replace(/^<svg\b/, '<svg xmlns="http://www.w3.org/2000/svg"');
-}
-// ダウンロードを開始してから少し待って URL を捨てる。
-// `a.click()` の直後に消すと失敗するブラウザがある(U6)ので、必ず待つ。
-function download(blob, name) {
-  const a = document.createElement('a');
-  const u = URL.createObjectURL(blob);
-  a.href = u; a.download = name; a.click();
-  setTimeout(() => URL.revokeObjectURL(u), 1000);
-}
-// SVGキャンバスを PNG または SVG として保存
-function exportImage(kind) {
-  const m = curMap(), scale = expScale(), transparent = document.getElementById('exptrans').checked;
-  const clone = exportClone(scale, transparent);
-  if (kind === 'svg') {
-    download(new Blob([svgText(clone)], { type: 'image/svg+xml;charset=utf-8' }), safeFilename(m.name) + '.svg');
-    return;
-  }
-  const svg64 = btoa(unescape(encodeURIComponent(svgText(clone))));
+// SVGキャンバスをPNG画像として保存
+function exportImage() {
+  const svg = document.getElementById('cv');
+  const xml = new XMLSerializer().serializeToString(svg);
+  const svg64 = btoa(unescape(encodeURIComponent(xml)));
   const img = new Image();
   img.onload = () => {
-    const w = num(mw(m)), h = num(mh(m));
+    const m = curMap(), cw = mw(m), ch = mh(m);
     const canvas = document.createElement('canvas');
-    canvas.width = w * scale; canvas.height = h * scale;   // 倍率(U6)
+    canvas.width = cw; canvas.height = ch;
     const ctx = canvas.getContext('2d');
-    if (!transparent) { ctx.fillStyle = m.bg || BG; ctx.fillRect(0, 0, canvas.width, canvas.height); }   // 透過なら塗らない
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob(blob => { if (blob) download(blob, safeFilename(m.name) + '.png'); }, 'image/png');
+    ctx.fillStyle = m.bg || BG;
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.drawImage(img, 0, 0, cw, ch);
+    canvas.toBlob(blob => {
+      if (!blob) return;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (curMap().name || '路線図') + '.png';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }, 'image/png');
   };
-  img.onerror = () => toast('画像の書き出しに失敗しました。別の画像で試してください。', { key: 'expimg' });
+  img.onerror = () => alert('画像の書き出しに失敗しました。');
   img.src = 'data:image/svg+xml;base64,' + svg64;
 }
 
-/* ---------- 別ウィンドウとの同期(S4) ----------
-   相手の保存が届いても、こちらに未確定の作業(入力中・ドラッグ中・道路描画中・自動保存の保留)
-   がある間は上書きしない。バナーでどちらを使うかを選ばせる。
-   ・「相手の版を読み込む」= サニタイズを通した相手の版を適用して履歴をリセット
-   ・「自分の版を残す」     = 次にこちらの保存が成功するまで相手の版を受け取らない
-     (次の保存で上書きされる = ユーザーが選んだ結果)
-   BroadcastChannel は「最適化」にすぎないので使わない(同じ経路が2本になり検証が二重になる)。 */
-let remoteRaw = null;   // 保留中の相手の版(文字列のまま。読むとき初めてサニタイズする)
-
-// 入力欄・プルダウン・編集可能領域にフォーカスがあるか。
-// SELECT と contenteditable も見る(以前は INPUT|TEXTAREA のみで、
-// プルダウンにフォーカスしたまま Backspace を押すと選択中の駅が消えていた = U4)
-const isTextEditing = () => {
-  const ae = document.activeElement;
-  if (!ae || ae === document.body) return false;
-  if (ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT') return true;
-  if (ae.tagName === 'INPUT') return !/^(checkbox|radio|button|submit|reset|range|color|file|image)$/.test(ae.type || 'text');
-  return !!ae.isContentEditable;
-};
-const localBusy = () => !!drag || !!ui.drawing || isTextEditing();
-
-function askRemote(raw) {
-  remoteRaw = raw;
-  setBanner('sync', '別のタブでこの路線図が変更されました。どちらを使うか選んでください。', [
-    { label: '相手の版を読み込む', onClick: loadRemote },
-    { label: '自分の版を残す', onClick: keepLocalVersion }
-  ]);
-}
-function loadRemote() {
-  const raw = remoteRaw;
-  remoteRaw = null;
-  clearLocalAuthority();
-  if (raw) applyRemote(raw);
-}
-// 保留していた相手の版を捨てる(JSONの読み込みなどで文書を入れ替えたとき)
-function dropRemote() { remoteRaw = null; clearBanner('sync'); }
-// 相手の版を取り込む(保存ボタンと同じ入口 = サニタイズ + 移行)
-function applyRemote(raw) {
+// 別ウィンドウでの変更を取り込む
+window.addEventListener('storage', e => {
+  if (e.key !== 'railmaps' || !e.newValue || drag) return;
   try {
-    const d = JSON.parse(raw);
-    const syncWarnings = core.importDocument(d);
-    if (syncWarnings.length) console.warn('タブ間同期で直した項目:', syncWarnings);
-    // 相手の変更を取り込んだ時点で履歴をリセット
+    const d = JSON.parse(e.newValue);
+    if (!Array.isArray(d.maps) || !d.maps.length) return;
+    core.replace(d);
+    // 別ウィンドウの変更を取り込んだ時点で履歴をリセット
     core.resetHistory(viewNow());
     updateUndoButtons();
     ui.open = ui.open.filter(id => S.maps.some(m => m.id === id));
@@ -814,23 +464,15 @@ function applyRemote(raw) {
     } else if (!curMap().lines.some(l => l.id === ui.line)) { ui.line = curMap().lines[0].id; ui.sel = null; }
     if (ui.home) { renderAll(); return; }
     renderTabs(); renderCanvas();
-    // 入力欄・プルダウンの最中は描き直さない(選択や入力がリセットされるため = U4)
-    if (!isTextEditing()) renderSide();
+    if (!/INPUT/.test(document.activeElement.tagName)) renderSide();
   } catch (err) {}
-}
-
-window.addEventListener('storage', e => {
-  if (e.key !== KEYS.maps || !e.newValue) return;
-  // 決着していない競合がある間は自動適用せず、バナーの中身だけ最新の相手の版へ入れ替える
-  if (hasBanner('sync') || shouldAskRemote(localBusy())) { askRemote(e.newValue); return; }
-  applyRemote(e.newValue);
 });
 
 /* ---------- サイドバーの幅(ドラッグで変更・localStorage に記憶) ----------
    左 = 「駅リスト + クイック操作」を統合した #leftcol、右 = #side。
    幅は CSS 変数 --lw / --rw で渡す(描画側は JS に依存しない)。ドラッグ以外に
    キーボード(←/→=10px、Shift=1px、Home/End=最小/最大、Enter=既定)でも変えられる。 */
-const PWKEY = KEYS.panelw, PWDEF = { left: 400, right: 270 };
+const PWKEY = 'railpanelw', PWDEF = { left: 400, right: 270 };
 const PWRANGE = { left: [260, 640], right: [220, 560] };
 const STAGE_MIN = 200;   // キャンバスに最低限残す幅
 const pw = (() => {
@@ -867,11 +509,7 @@ function setPanelW(side, w) {
   pw[side] = Math.max(PWRANGE[side][0], Math.min(hi, Math.round(w)));
   applyPanelW();
 }
-function savePanelW() {
-  // 幅は見た目だけの設定(文書本体ではない)。書けなくても内容は失われないので握りつぶす。
-  // 文書本体の保存失敗は ui-state の save() が必ず知らせる(S5)。
-  try { localStorage.setItem(PWKEY, JSON.stringify(pw)); } catch (e) {}
-}
+function savePanelW() { try { localStorage.setItem(PWKEY, JSON.stringify(pw)); } catch (e) {} }
 applyPanelW();
 // ウィンドウの大きさが変わったら、記憶した幅を今の画面幅に合わせて当て直す(記憶した値自体は変えない)
 window.addEventListener('resize', applyPanelW);
@@ -918,7 +556,5 @@ wireSplit('splleft', 'left');
 wireSplit('splright', 'right');
 
 /* 各モジュールの描画関数を登録してから最初の描画(登録は renderAll より前に行う) */
-// まだ日時の無い路線図に「記録開始」の時刻を付けてから描く(U5: 一覧の最終更新)
-stampMissing();
 setRender({ tabs: renderTabs, home: renderHome, canvas: renderCanvas, side: renderSide, left: renderLeft });
 renderAll();

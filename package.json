@@ -3,10 +3,8 @@
   "version": "1.0.0",
   "description": "路線図エディタ(Web版)",
   "private": true,
-  "type": "module",
   "scripts": {
     "start": "node scripts/serve.cjs",
-    "serve": "node scripts/serve.cjs",
-    "test": "node --test"
+    "serve": "node scripts/serve.cjs"
   }
 }

@@ -65,13 +65,6 @@ export const allStations = map => {
   (map.hubs || []).forEach(s => seen.set(s.id, s));
   return [...seen.values()];
 };
-// 「何も置かれていない路線図」か(U5: 空状態の案内を出すかの判定)。
-// 名前では判定しない(ユーザーが名前を変えると案内が出なくなってしまうため)。
-// mkMap() は boxes / images を作らないので、無い配列も空として扱う。
-export const blankMap = m => !!m &&
-  !m.lines.some(l => l.stations.length || l.crossings.length) &&
-  !(m.roads || []).length && !(m.stops || []).length &&
-  !(m.hubs || []).length && !(m.boxes || []).length && !(m.images || []).length;
 
 /* ---------- 「接続する駅」(路線ごとのリスト) ---------- */
 export const linksIn = (s, lid) => (s.links && Array.isArray(s.links[lid])) ? s.links[lid] : [];

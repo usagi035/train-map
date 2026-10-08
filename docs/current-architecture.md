@@ -42,9 +42,9 @@ train/
 | preload | **preload ファイルは存在しない** |
 | IPC | **未使用**(`ipcMain` / `ipcRenderer` / `contextBridge` はどこにも無い) |
 | セキュリティ設定 | `contextIsolation: true` / `nodeIntegration: false`(`main.js` L8) |
-| CSP | `index.html` L5:`default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'` |
+| CSP | `index.html` L5:`default-src 'self'`、script/style の inline と `data:` 画像のみ許可 |
 | 複数ウィンドウ | Renderer が `window.open('index.html#<mapId>')` で開く。Main は `setWindowOpenHandler` でサイズだけ指定 |
-| 別ウィンドウ間の同期 | 同一 `localStorage` + `storage` イベント(`renderer.js` L1688)。Web 版は作業中なら上書きせずバナーで選ばせる(S4) |
+| 別ウィンドウ間の同期 | 同一 `localStorage` + `storage` イベント(`renderer.js` L1688) |
 | キーボード | Main の `before-input-event` が Ctrl+W を横取りし、Renderer の `window.__closeTab()` を呼ぶ(`main.js` L20-30) |
 
 → WebRTC / WebSocket は **Renderer の標準 API だけで足りる**(`nodeIntegration` を開ける必要は無い)。仕様6.2の前提と一致。
@@ -54,7 +54,7 @@ train/
 すべて **グローバル変数** 2つに集約されている(`renderer.js` L41・L90)。
 
 ```js
-let S = { maps: [ Map, … ] }   // 永続データ。localStorage('train-map:v1:maps') に JSON で保存
+let S = { maps: [ Map, … ] }   // 永続データ。localStorage('railmaps') に JSON で保存
 let ui = { map, line, sel, tool, open, home, zoom, drawing, bulk, bulkRect, bulkMap }  // 画面状態(保存されない)
 ```
 
@@ -70,21 +70,17 @@ let ui = { map, line, sel, tool, open, home, zoom, drawing, bulk, bulkRect, bulk
 すべて「**イベントハンドラ or 編集関数が `S`/`ui` を直接 mutate → `save()` → `renderAll()`**」という同じ形。
 `core.dispatch` に相当する**共通の入口は存在しない**が、**共通の出口(`save()` / `renderAll()`)は存在する**。
 
-### 4.1 キャンバス(マウス/タッチ/キーボード)
-
-※ 入力は U1 で**全て Pointer Events** に移行済み(`mousedown` 等は残っていない)。
-`cv pointerdown` = 押した瞬間、`window pointerup/pointercancel` = 離した瞬間、
-タッチの**追加する行動だけ**は `actAt()` で「タップ(離したとき)」へ送られる。
+### 4.1 キャンバス(マウス/キーボード)
 
 | 操作 | 更新箇所 |
 |---|---|
-| 駅の追加 | `addStation()` L793 ← `cv pointerdown`(tool=station)L990-1006(タッチはタップ時) |
-| 乗り換え駅の追加 | `addHubStation()` L808 ← pointerdown L1007 |
-| 踏切の追加 | `addCrossing()` L877 ← pointerdown L1008 |
-| バス停 / バスターミナル追加 | `addBusStop()` L822 ← pointerdown L1009-1010 |
-| ラベル枠の追加 | pointerdown 内で直接 `m.boxes.push` L1012-1018 |
-| 幹線道路の追加 | `addRoadPoint()` L859 / `finishRoad()` L841 / `cancelRoad()` L858 ← pointerdown L1011・`dblclick` L1178(タッチはダブルタップ)・`Enter` L1192 |
-| **要素の移動(ドラッグ)** | `window pointermove` L1075-1149 が**入力ごとに直接 mutate**(駅・駅名・バス停・バス停名・道路全体・頂点・ラベル枠・画像・踏切)。**確定は `pointerup` L1165-1170 の `save()` 1回** |
+| 駅の追加 | `addStation()` L793 ← `cv mousedown`(tool=station)L990-1006 |
+| 乗り換え駅の追加 | `addHubStation()` L808 ← mousedown L1007 |
+| 踏切の追加 | `addCrossing()` L877 ← mousedown L1008 |
+| バス停 / バスターミナル追加 | `addBusStop()` L822 ← mousedown L1009-1010 |
+| ラベル枠の追加 | mousedown 内で直接 `m.boxes.push` L1012-1018 |
+| 幹線道路の追加 | `addRoadPoint()` L859 / `finishRoad()` L841 / `cancelRoad()` L858 ← mousedown L1011・`dblclick` L1178・`Enter` L1192 |
+| **要素の移動(ドラッグ)** | `window mousemove` L1075-1149 が**マウスごとに直接 mutate**(駅・駅名・バス停・バス停名・道路全体・頂点・ラベル枠・画像・踏切)。**確定は `mouseup` L1165-1170 の `save()` 1回** |
 | ラベル枠/画像のリサイズ | 同 L1138(`bxr`)・L1130(`imgr`)、新規枠のドラッグ L1139(`bxnew`) |
 | 画像の追加/差替え | `importImageFile()` L1253 |
 | 削除(1件/□で複数) | `delOne()` L891 / `del()` L915 ← `Delete`/`Backspace` L1191・ツールバー `#del` L1217・`#idel` L1529 |
@@ -112,17 +108,11 @@ let ui = { map, line, sel, tool, open, home, zoom, drawing, bulk, bulkRect, bulk
 | 駅の並べ替え | `moveStation()` L756 ← 左パネル `click` L1649 / `drop` L1674 |
 | 選択を削除 / Undo / Redo | ツールバー `click` L1208-1231 |
 | JSON 読み込み | `#file` `change` L1232 → `migrate()` + `S` 差し替え |
-| JSON / PNG / SVG 書き出し | `#exp` → `download()`(JSON)、`#expimg` → `#exppop` を開き、`#exppng` / `#expsvg` → `exportImage(kind)`(U6)。**状態は変えない** = 書き出す中身は `#cv` を `cloneNode(true)` した**クローン側**で作り、`data-chrome`(選択の枠・ハンドル・□の枠・描画中プレビュー)だけを取り除く。倍率 1×/2×/3× と背景の透過はポップアップの選択、object URL は `download()` で**開始から1秒後に revoke** |
+| JSON / PNG 書き出し | `#exp` L1225 / `exportImage()` L1303(**状態は変えない**) |
 | タブ開閉・路線図の新規/削除 | `openMap` L1328・`closeTab` L1333・`newMap` L1342・`deleteMap` L1343 |
 | 別ウィンドウからの取り込み | `storage` L1688(**`S` を丸ごと差し替え、履歴もリセット**) |
-| ツールバーのグループ分け・「?」のショートカット一覧(U3) | `index.html` の `.sep` / `#keyshelp` / `#keyspop` + `renderTools()` の `aria-pressed`(**状態は変えない**) |
-| 矢印キーでの移動 / Tab での選択巡回(U4) | `renderer.js` の `window keydown` → `nudge()` / `cycleSel()`。**`core.*` を呼ぶだけで直接代入はしない**、変更は `deferSave()` でまとめて1回の履歴へ。移動するのは `ui.sel`(□選択のまとめは移動しない)。読み上げ(`announceStatus`)は状態を変えない |
-| 一覧の複製 / 名前変更 / 削除の記録(U5) | `tabs.js` の `duplicateMap()` / `startRename()` / `deleteMap()` → **`core.duplicateMap()` / `core.renameMap()` を呼ぶだけ**(直接代入なし)。`save(変わったID)` を渡して履歴と**最終更新**(`KEYS.updated` = **文書本体には足さない**)を記録し、削除は `forgetMap()`。名前変更は `prompt` なし = その行だけ `<input>` に入れ替え(Enter / blur で確定、Esc で中止)、一覧ごとではなく変更した所だけ描き直す |
-| 空状態の案内とサンプルの読み込み(U5) | `renderCanvas()` が `blankMap(m)` で `#empty` の出し入れ(**表示の出し入れだけ**)、空のあいだは `#stage` のスクロールを戻す。`#loadsample` click → `core.loadSample(いま開いているID)` → `ui.line` を選び直し → `save(同じID)`。サンプルは `src/core/sample.js`、**`sanitizeDocument()` 通過を S1 のテストで保証** |
-| 路線図ごとのズーム・スクロール(U7) | **読み**: `renderCanvas()` が「路線図が切り替わった最初の描画」で `mapView()` を読んで `ui.zoom` と `#stage` のスクロールを戻す(覚えが無ければ 100%・原点)。**書き**: `setZoom()`・`#stage` の `scroll`(300ms まとめ)・`pagehide` → `saveMapView()`(**一覧画面のあいだは書かない** = 隠れている間は位置を読めず、ズームも前の地図のまま)。削除は `forgetMapView()`、取り消しで戻す。**すべて `KEYS.view` に書くだけ = 文書本体(`KEYS.maps`)には足さず、書き出しの JSON は変わらない。`core.*` を呼ばない(表示だけ)** |
-| ヘッダーの保存表示(U7) | `#saveind` ← `setSavePending()`(`deferSave()` で「保存中…」/ `save()` で解除)+ `setSaveFailed()`(S5 の赤バナーと同じ切り替えで「保存に失敗」)。**表示だけで文書は変えない**。文言は日本語のまま(i18n は入れない)、失敗の読み上げは S5 のバナーに任せて live region は付けない。動きを減らす設定も `index.html` の CSS(`@media (prefers-reduced-motion: reduce)`)だけで済ませ、**ダークテーマは足さない** |
 
-**洗い出しの結果: 状態を変える箇所は上記の3グループ(キャンバス pointerdown/pointermove・編集関数・パネルの input/change/click)に集約されている。** 全数を列挙可能であり、`dispatch` への付け替えは機械的に進められる。**キーボード経由の操作(U4)と、一覧・空状態の操作(U5)も同じく `core.*` と `save(変わったID)` を通るだけなので、状態を書き換える経路は増えていない。書き出し(U6)はクローンだけを書き換え、**見かけの位置・保存の表示・動きを減らす設定(U7)はいずれも「読む/表示する」だけで `core.*` を呼ばない**ため、やはり増えていない。**
+**洗い出しの結果: 状態を変える箇所は上記の3グループ(キャンバス mousedown/mousemove・編集関数・パネルの input/change/click)に集約されている。** 全数を列挙可能であり、`dispatch` への付け替えは機械的に進められる。
 
 ## 5. ID の付け方
 
@@ -136,14 +126,12 @@ const uid = () => Math.random().toString(36).slice(2, 9);   // renderer.js L25
 
 ## 6. ファイル形式
 
-- **保存先は `localStorage('train-map:v1:maps')`**、値は `JSON.stringify(S)`。エクスポートは同じ構造で、ファイル名は日時入り `railmaps-YYYYMMDD-HHmm.json`(`#exp`)。PNG の名前は地図名を `safeFilename()` で加工したもの(S6②)。
-  **保存に失敗したら黙らない**: `setSaveFailed(true)` で赤い常駐バナー(「書き出し」付き)+ `beforeunload` を張り、
-  次の保存が成功するまで解除しない(S5)。
+- **保存先は `localStorage('railmaps')`**、値は `JSON.stringify(S)`。エクスポートは同じ構造の `railmaps.json`(`#exp` L1225)。
 - 構造: `{ maps: [ { id, name, bg, w, h, lines[], roads[], stops[], hubs[], boxes[], images[], show{} } ] }`
 - **`formatVersion` のようなバージョンフィールドは無い。**
 - ただし **マイグレーションの仕組みは既に存在する**: `migrate()` L45-88 が旧形式を変換する
   (①欠落配列の補完 ②`show` の正規化 ③`Station.links` の「配列 → 路線ごとのオブジェクト」 ④`type:'road'` の路線を `roads`+`stops` へ)
-- 読み込み時の検証は `sanitizeDocument()`(S1)= **拒否ではなく修復**(不正な値は既定へ。入口は「読み込み」「起動時」「storage」の3つ)。
+- 読み込み時の検証は L1238(`maps` と `lines` が配列か)。**壊れたファイルは alert して何もしない。**
 
 ## 7. Undo / Redo
 
@@ -163,14 +151,8 @@ const uid = () => Math.random().toString(36).slice(2, 9);   // renderer.js L25
 
 - **単一ウィンドウ内のタブ**(`#tabs`)+ 「一覧」画面(`renderHome()` L340)。
 - `window.open('index.html#<mapId>')` で**別ウィンドウ**。hash があるウィンドウはその路線図だけを開く(L91-92)。
-- 開いているタブは `localStorage('train-map:v1:open')` に記憶(`persistOpen()` L1301)。開閉状態は `train-map:v1:acc`。
-  キー一覧は `src/renderer/storage.js`(旧 `railmaps` 等からは起動時に `migrateLegacyKeys()` が移行、旧キーは残す)。
-- **路線図ごとの「最終更新」は `train-map:v1:updated`(U5)**。文書本体に足すと書き出しの JSON 形式が変わるため**別キー**に持つ。
-  記録するのは `save()` が**成功した**変更だけ(`touchMap()`)。削除は `forgetMap()`、起動時に `stampMissing()` が
-  時刻の無い路線図へ「記録開始」の時刻を付ける。一覧(空状態の案内 `#empty`・サンプル読込も含む)は表示するだけで、中身は `core.*` に任せる。
-- **別ウィンドウ同士は同一 localStorage を使い、`storage` イベントで最新を取り込む**(L1688)。取り込み時に履歴はリセット。
-  Web 版では**相手の保存が届いても、こちらに未確定の作業(入力中・ドラッグ中・自動保存の保留)がある間は上書きせず**、
-  画面上部のバナーで「相手の版を読み込む / 自分の版を残す」を選ばせる(S4)。
+- 開いているタブは `localStorage('railopen')` に記憶(`persistOpen()` L1301)。開閉状態は `railacc`。
+- **別ウィンドウ同士は同一 localStorage を使い、`storage` イベントで常に最新を全面的に取り込む**(L1688)。取り込み時に履歴はリセット。
 - 終了時: **保存用のフックは存在しない**。`save()` が編集ごとに都度書き込んでいるため、ウィンドウを閉じてもデータは最後の `save()` のまま(失われるものはない)。**閉じる前の確認ダイアログは無い**(未保存=蓄積された履歴のみ)。
 - 未コミットの編集は基本発生しない(`save()` が必ず走るため)。
 
@@ -197,7 +179,7 @@ const uid = () => Math.random().toString(36).slice(2, 9);   // renderer.js L25
 | 1 | 3章 `src/core|file|ui|online|main` のモジュール構成(案) | **`src/` 無し。単一の `renderer.js`(1708行)**。ES modules でも無く `<script src>` | Phase 1 は分割ではなく**新規構成の作成**。モジュール化の方式の決定が必要(判断ポイント1) |
 | 2 | 4.3「既存ファイルに**連番の ID** が入っている場合」 | **既存は `Math.random()` の7文字**(`uid()`)。連番ではない | ID 改修の必要性が下がる。既存ファイルへの影響も小さい(判断ポイント2) |
 | 3 | 5章「形式のバージョン(例: `formatVersion`)を持たせる」 | バージョン**無し**。ただし **`migrate()` が既に存在**し旧形式を変換している | `formatVersion` の追加は任意。追加しても読み込みは互換可能 |
-| 4 | 4.1.3「Operation は確定した編集の単位。ドラッグは mouseup で1回」 | **既存も `pointerup` の `save()` 1回**(pointermove 中は履歴に積まない) | **仕様と一致**。Operation 化しやすい |
+| 4 | 4.1.3「Operation は確定した編集の単位。ドラッグは mouseup で1回」 | **既存も mouseup の `save()` 1回**(mousemove 中は履歴に積まない) | **仕様と一致**。Operation 化しやすい |
 | 5 | 10章「既存のテストの仕組みがあればそれに従う」 | **テストは一切無し** | `node:test` を新規導入(依存追加なしで可) |
 | 6 | 7章「メニューに共同編集を設け…」 | **アプリにメニューが無い**(`setMenuBarVisibility(false)`)。操作はツールバーと右パネルのみ | 「共同編集」の置き場が問題(判断ポイント4) |
 | 7 | 4.1.1「UI が状態を直接書き換えない」 | すべて直接書き換えている | Phase 2 で全ハンドラを `dispatch` 経由に付け替える必要あり |
