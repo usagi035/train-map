@@ -129,6 +129,38 @@ test('S1-5 __proto__ を混ぜても Object.prototype を汚染しない', () =>
   assert.equal(doc.maps[0].polluted, undefined);
 });
 
+test('S1-5b 予約名(__proto__ など)を ID にしても作り直し、links のキーも追わせて JSON に残る', () => {
+  const RESERVED = ['__proto__', 'constructor', 'prototype', 'toString', 'valueOf',
+    'toLocaleString', 'hasOwnProperty', 'isPrototypeOf', 'propertyIsEnumerable'];
+  const d = baseDoc();
+  d.maps[0].id = '__proto__';
+  const l = d.maps[0].lines[0];
+  l.id = '__proto__';
+  l.stations = [
+    // JSON.parse なら __proto__ も「普通の own key」として入る(リテラルは prototype 差し替えになる)
+    { id: 'toString', name: '駅A', x: 100, y: 100, hub: false,
+      links: JSON.parse('{"__proto__":["hasOwnProperty"]}') },
+    { id: 'hasOwnProperty', name: '駅B', x: 300, y: 100, hub: false, links: {} },
+    { id: 'constructor', name: '駅C', x: 500, y: 100, hub: false, links: {} }
+  ];
+  assert.ok(Object.hasOwn(l.stations[0].links, '__proto__'), '前提: __proto__ は own key として存在する');
+  const { doc } = sanitizeDocument(d);
+  const m = doc.maps[0], line = m.lines[0];
+  // 予約名はすべて作り直される(= `__proto__` がオブジェクトのキーに到達しない)
+  assert.ok(!RESERVED.includes(m.id) && ID_RE.test(m.id), '地図IDが作り直される');
+  assert.ok(!RESERVED.includes(line.id) && ID_RE.test(line.id), '路線IDが作り直される');
+  for (const s of line.stations) assert.ok(!RESERVED.includes(s.id) && ID_RE.test(s.id), '駅IDが作り直される');
+  assert.equal(new Set(line.stations.map(s => s.id)).size, line.stations.length, 'ID は重複しない');
+  // links のキーは新しい路線IDへ追従し、保存(JSON往復)しても消えない
+  const a = line.stations[0];
+  assert.deepEqual(Object.keys(a.links), [line.id], 'links のキーが新しい路線IDに追う');
+  const back = JSON.parse(JSON.stringify(a.links));
+  assert.deepEqual(back[line.id], [line.stations[1].id], '往復後もリンクが残る(保存で消えない)');
+  // 組み込み本体は傷ついていない
+  assert.equal({}.polluted, undefined, 'prototype 汚染なし');
+  assert.equal(Object.prototype.constructor, Object, 'constructor が潰れていない');
+});
+
 test('S1-6 10万駅の敵対ファイルも上限まで詰めて高速に終わる', () => {
   const d = baseDoc();
   const l = d.maps[0].lines[0];

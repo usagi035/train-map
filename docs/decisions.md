@@ -787,3 +787,32 @@ exports, SVG export, revoke object URLs after the download starts)。
 - **自動テスト**: `test/s3.test.js` 6件(NS配下・移行・旧キー保持・移行済みを上書きしない・
   直せない文書を移さない・画面側に旧キーの直接指定が無いこと・起動経由の保存先)。
   全体で 28/28 green。
+
+
+## 30. 予約名と衝突する ID(`__proto__` など)を弾く(S1-4 の抜け)→ 決定(2026-10-08 実装・検証済み)
+
+依頼: 指示書 S1-4(ID の検証・再生成)と S1-5(`__proto__` キーの汚染)の追加確認で発見した欠落。
+`ID_RE = /^[A-Za-z0-9_-]{1,64}$/` は `__proto__` / `constructor` などの**予約名を一切弾かない**ため、
+敵対ファイルの地図ID・路線IDに `__proto__` を入れると、そのまま画面側の
+「ID をキーにしたオブジェクト」(`links` / 表示位置 `view` / 最終更新 `updated`)に到達していた。
+
+- **起きていた実害(node 実測・修正前)**:
+  - `links`(路線IDがキー)への代入が `Object.prototype.__proto__` の setter を介してしまい、
+    own key が作られない → `Object.keys` / `JSON.stringify` に現れず、
+    **保存・書き出しのたびに接続データが黙って消える**(データ損失)。
+  - `view` / `updated` も同じ代入の罠(地図IDが `__proto__` のとき値が残らない)。
+  - `Object.prototype` 自体の汚染には至らない(値が配列で prototype が差し替わるだけ)が、
+    指示書の方針「正当なデータを落とすほうがバグより悪い」に反する欠陥だった。
+- **採用(`src/core/sanitize.js`)**: `RESERVED_IDS`(指示書が名指しした `__proto__` /
+  `constructor` / `prototype` + `Object.prototype` のメソッド名)を予約し、`idOk()` として
+  ID 判定に加えた。合わなければ従来どおり `newId()` で作り直し、対応表経由で
+  `links` のキー・値などの参照を追従させる(= 要素は1つも失われない)。
+  入力を拒むわけではないので後方互換は維持(これらのIDはこのアプリからは生まれない)。
+- **検証(node プローブ)**: `JSON.parse` で own `__proto__` キーを持つ敵対文書を sanitize →
+  すべてのIDがUUIDへ作り直され、`links` のキーが新しい路線IDに追従して
+  **`JSON.stringify` → `JSON.parse` の往復でも残る**(修正前は `{}` で消えていた)。
+  `{}.polluted` は undefined、`Object.prototype.constructor` は `Object` のまま。
+  地図IDの再生成で `ui.open` に古いIDが残っても、読み込み時の修復で実在IDに絞られ、
+  無ければ一覧へフォールバックするため参照切れは出ない。
+- **自動テスト**: `test/sanitize.test.js` に `S1-5b` を追加(own key の前提確認・IDの再生成・
+  links の追従・JSON往復後の残存・prototype の健全性)。全体で **82/82 green**。

@@ -43,6 +43,14 @@ export function safeFilename(s) {
 /* ---------- 型ごとの検証ヘルパ(すべて「直す」方向に倒す) ---------- */
 const HEX = /^#[0-9a-fA-F]{6}$/;
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+// Object.prototype の予約名は ID に使わない(S1-4 の拡張)。ID は「接続 links / 表示位置 view /
+// 最終更新時刻」をキーにしたオブジェクトで使われるため、`__proto__` が通ると代入が
+// Object.prototype の setter を介して prototype の差し替えになり、Object.keys / JSONに
+// 現れなくなる(= 保存のたびにデータが黙って消える)。予約語は新規IDへ作り直すだけなので
+// 要素は失われず、参照(links)も対応表経由で追いかける。
+const RESERVED_IDS = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf',
+  'toLocaleString', 'hasOwnProperty', 'isPrototypeOf', 'propertyIsEnumerable']);
+const idOk = s => ID_RE.test(s) && !RESERVED_IDS.has(s);
 // 画像は data URL のうち指定の形式のみ。svg / javascript: / http(s) / 相対URL は禁止
 const IMG_RE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const SHAPES = ['circle', 'double', 'square', 'diamond'];
@@ -75,7 +83,7 @@ function makeBag() {
   const take = (raw, map, set) => {
     // 元の文字列は「壊れていても」対応表に残す(参照を後から追えるようにするため)
     const rawStr = (typeof raw === 'string') ? raw : '';
-    const usable = rawStr !== '' && ID_RE.test(rawStr) && !used.has(rawStr);
+    const usable = rawStr !== '' && idOk(rawStr) && !used.has(rawStr);
     let id = usable ? rawStr : newId();
     while (used.has(id)) id = newId();
     used.add(id);
@@ -94,7 +102,7 @@ function makeBag() {
 // 地図のID(文書じゅうで重複しないこと)
 function takeMapId(raw, used) {
   const rawStr = (typeof raw === 'string') ? raw : '';
-  const usable = rawStr !== '' && ID_RE.test(rawStr) && !used.has(rawStr);
+  const usable = rawStr !== '' && idOk(rawStr) && !used.has(rawStr);
   let id = usable ? rawStr : newId();
   while (used.has(id)) id = newId();
   used.add(id);
